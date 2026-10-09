@@ -1,4 +1,4 @@
-"""One-shot FastF1 lap exporter; historical gaps are not yet reconstructed."""
+"""One-shot FastF1 lap exporter and Home Assistant archive publisher."""
 import json
 import logging
 from pathlib import Path
@@ -57,3 +57,13 @@ temp = output.with_suffix(".json.tmp")
 temp.write_text(json.dumps(result, separators=(",", ":"), allow_nan=False))
 temp.replace(output)
 logging.info("Exported %d laps to %s", len(laps), output)
+
+# Publish a browser-readable copy for the Lovelace card. /share is not
+# available via Home Assistant's /local/ URL; /config/www is.
+web_root = Path("/config/www/f1-race-trace")
+web_root.mkdir(parents=True, exist_ok=True)
+web_output = web_root / output.name
+web_temp = web_output.with_suffix(".json.tmp")
+web_temp.write_text(json.dumps(result, separators=(",", ":"), allow_nan=False))
+web_temp.replace(web_output)
+logging.info("Published archive at /local/f1-race-trace/%s", output.name)
