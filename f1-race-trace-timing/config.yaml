@@ -1,5 +1,5 @@
 name: F1 Race Trace Timing
-version: "0.1.0"
+version: "0.1.1"
 slug: f1_race_trace_timing
 description: Historical lap timing export for F1 Race Trace
 url: https://github.com/njharrison/home-assistant-f1-race-trace
