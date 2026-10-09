@@ -6,7 +6,7 @@ FROM ${BUILD_FROM}
 # compilation of matplotlib and its native dependencies.
 RUN apk add --no-cache python3 py3-pip py3-pandas py3-numpy py3-scipy \
     py3-matplotlib py3-requests py3-packaging py3-cryptography \
-    py3-dateutil py3-pytz py3-tzdata && \
+    py3-dateutil py3-tzdata && \
     python3 -m venv --system-site-packages /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir --prefer-binary 'fastf1>=3.4,<4'
 
