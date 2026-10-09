@@ -4,7 +4,7 @@ class F1RaceTrace extends HTMLElement {
     super();
     this.attachShadow({mode:"open"});
     this.config = {};
-    this.reference = "LEADER";
+    this.reference = "AVERAGE";
     this.hiddenDrivers = new Set();
     this.signature = "";
     this.archive = null;
@@ -13,7 +13,7 @@ class F1RaceTrace extends HTMLElement {
     this.archiveLoading = false;
   }
   setConfig(config) {
-    this.config = {entity:"sensor.f1_drivers_driver_positions",lap_entity:"sensor.f1_race_lap_count",height:"85vh",archive_url:"/local/f1-race-trace/2026-japanese-grand-prix-r.json",...config};
+    this.config = {entity:"sensor.f1_drivers_driver_positions",lap_entity:"sensor.f1_race_lap_count",height:"85vh",archive_url:null,...config};
     this.loadArchive();
     this.render();
   }
@@ -115,12 +115,22 @@ class F1RaceTrace extends HTMLElement {
     const hass=this._hass,s=hass?.states?.[this.config.entity];
     const raw=s?.attributes?.drivers;
     const liveDrivers=Array.isArray(raw)?raw:[];
-    const drivers=this.archiveDrivers(liveDrivers)||this.data(liveDrivers);
+    const drivers=(this.config.archive_url&&this.archiveDrivers(liveDrivers))||this.data(liveDrivers);
     const lap=Math.max(1,Number(hass?.states?.[this.config.lap_entity]?.state)||1);
     const active=drivers.filter(d=>d.points.some(p=>p.lap<=lap)&&!this.hiddenDrivers.has(d.id));
     const reference=drivers.find(d=>d.id===this.reference);
     const refMap=new Map(reference?.points.filter(p=>p.lap<=lap).map(p=>[p.lap,p.y])||[]);
-    const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:p.y-(refMap.get(p.lap)||0)}))})).filter(d=>d.points.length);
+    // Race trace: subtract cumulative reference pace from each driver's elapsed
+    // time. A fixed per-lap baseline is common to every driver, preserving
+    // relative ordering while allowing the leader's trace to rise and fall.
+    const archived=!!(this.config.archive_url&&this.archive);
+    const allLapTimes=archived?this.archive.laps.filter(r=>r.lap<=lap&&Number.isFinite(r.lap_time_seconds)&&r.lap_time_seconds>0).map(r=>r.lap_time_seconds):liveDrivers.flatMap(d=>Object.values(d.laps||{}).map(v=>this.seconds(v)).filter(v=>v!==null));
+    const sortedTimes=allLapTimes.sort((a,b)=>a-b);
+    // Trim extreme pit/safety-car laps; estimate representative green-flag pace.
+    const start=Math.floor(sortedTimes.length*.15),end=Math.ceil(sortedTimes.length*.75);
+    const sample=sortedTimes.slice(start,end);
+    const averagePace=sample.length?sample.reduce((a,b)=>a+b,0)/sample.length:95;
+    const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="AVERAGE"||this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:archived&&this.reference==="AVERAGE" ? -( (this.archive.laps.find(r=>r.driver===d.label&&r.lap===p.lap)?.lap_end_session_seconds ?? 0) - this.archive.laps.filter(r=>r.lap===1).reduce((min,r)=>Math.min(min,r.lap_end_session_seconds),Infinity) - (p.lap-1)*averagePace ) : this.reference==="AVERAGE" ? -(p.y-p.lap*0) : -(p.y-(refMap.get(p.lap)||0))}))})).filter(d=>d.points.length);
     const values=traces.flatMap(d=>d.points.map(p=>p.y));
     let low=Math.min(0,...values),high=Math.max(0,...values);
     const margin=Math.max(3,(high-low)*.08);low-=margin;high+=margin;
@@ -136,7 +146,7 @@ class F1RaceTrace extends HTMLElement {
       const pitDots=d.points.filter(p=>p.pit).map(p=>`<rect x="${x(p.lap)-5}" y="${y(p.y)-5}" width="10" height="10" fill="#0b121d" stroke="${d.color}" stroke-width="2"/>`).join("");
       return `<polyline points="${path}" fill="none" stroke="${d.color}" stroke-width="3.2" ${d.retired?'stroke-dasharray="7 6"':''}/><circle cx="${x(last.lap)}" cy="${y(last.y)}" r="4" fill="${d.color}"/><text x="${Math.min(W-R+9,x(last.lap)+9)}" y="${y(last.y)+5}" fill="${d.color}" font-size="17" font-weight="700">${this.escape(d.label)}</text>${pitDots}`;
     }).join("");
-    const opts=[{id:"LEADER",label:"Race leader"},...drivers.map(d=>({id:d.id,label:d.label}))];
+    const opts=[{id:"AVERAGE",label:"Average race pace"},{id:"LEADER",label:"Race leader"},...drivers.map(d=>({id:d.id,label:d.label}))];
     this.shadowRoot.innerHTML=`<style>
       :host{display:block;font-family:Inter,Roboto,Arial,sans-serif;color:#eaf2fb}
       ha-card{background:#0b121d;color:inherit;overflow:hidden;border-radius:12px}
@@ -149,10 +159,10 @@ class F1RaceTrace extends HTMLElement {
       button.off{opacity:.35}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px}
       .note{font-size:12px;color:#9eacbd;padding:0 24px 18px}.empty{padding:40px}
     </style><ha-card>
-      <div class="head"><div><div class="title">RACE TRACE <span style="color:#ff8700">/ F1</span></div><div class="subtitle">LAP ${lap} · ${drivers.length} DRIVERS · ${traces.length} TRACES · ${this.archive?"ARCHIVE":"LIVE"}</div></div><label>REFERENCE <select id="reference">${opts.map(o=>`<option value="${this.escape(o.id)}" ${this.reference===o.id?"selected":""}>${this.escape(o.label)}</option>`).join("")}</select></label></div>
+      <div class="head"><div><div class="title">RACE TRACE <span style="color:#ff8700">/ F1</span></div><div class="subtitle">LAP ${lap} · ${drivers.length} DRIVERS · ${traces.length} TRACES · ${archived?"ARCHIVE":"LIVE"}</div></div><label>REFERENCE <select id="reference">${opts.map(o=>`<option value="${this.escape(o.id)}" ${this.reference===o.id?"selected":""}>${this.escape(o.label)}</option>`).join("")}</select></label></div>
       ${traces.length?`<div class="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><rect width="${W}" height="${H}" fill="#0b121d"/>${grid}<line x1="${L}" y1="${y(0)}" x2="${W-R}" y2="${y(0)}" stroke="#8393a6" stroke-dasharray="8 7"/>${lines}</svg></div>`:'<div class="empty">Waiting for replay driver timing data.</div>'}
       <div class="legend">${drivers.map(d=>`<button data-driver="${this.escape(d.id)}" class="${this.hiddenDrivers.has(d.id)?"off":""}"><span class="dot" style="background:${d.color}"></span>${this.escape(d.label)} · P${this.escape(d.position)}</button>`).join("")}</div>
-      <div class="note">${this.archive?"Historical FastF1 lap-end timing. Gaps measured at the timing line, not simultaneous car positions; lapped cars are omitted when not comparable. Squares indicate pit-in laps.":"Live fallback: gaps estimated from available replay laps. "+(this.archiveError?"Archive unavailable: "+this.escape(this.archiveError):"Waiting for historical archive.")}</div>
+      <div class="note">${archived?"Historical FastF1 lap-end timing. Gaps measured at the timing line, not simultaneous car positions; lapped cars are omitted when not comparable. Squares indicate pit-in laps.":"Live fallback: gaps estimated from available replay laps. "+(this.archiveError?"Archive unavailable: "+this.escape(this.archiveError):"Waiting for historical archive.")}</div>
     </ha-card>`;
     this.shadowRoot.getElementById("reference")?.addEventListener("change",e=>{this.reference=e.target.value;this.render();});
     this.shadowRoot.querySelectorAll("[data-driver]").forEach(b=>b.addEventListener("click",()=>{const id=b.dataset.driver;this.hiddenDrivers.has(id)?this.hiddenDrivers.delete(id):this.hiddenDrivers.add(id);this.render();}));
