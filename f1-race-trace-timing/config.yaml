@@ -1,0 +1,22 @@
+name: F1 Race Trace Timing
+version: "0.1.0"
+slug: f1_race_trace_timing
+description: Historical lap timing export for F1 Race Trace
+url: https://github.com/njharrison/home-assistant-f1-race-trace
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: application
+boot: manual
+init: false
+map:
+  - share:rw
+options:
+  year: 2026
+  event: Japanese Grand Prix
+  session: R
+schema:
+  year: int(1950,2100)
+  event: str
+  session: str
