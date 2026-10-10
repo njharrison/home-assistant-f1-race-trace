@@ -195,10 +195,21 @@ class F1RaceTrace extends HTMLElement {
           const anchor=[...d.points,...history.values()].filter(p=>p.lap<=n-1+1e-6).sort((a,b)=>b.lap-a.lap)[0];
           if(!anchor||!this.sectorPace)continue;
           let base=anchor.y;
-          if(anchor.lap<n-1-1e-6)continue;
+          // Sparse lap history is common: use the latest known anchor, but
+          // never claim the missing intervening laps were observed.
           const preceding=[...history.values()].filter(p=>p.lap>n-1&&p.lap<n-1+sector/3).sort((a,b)=>b.lap-a.lap)[0];
           if(preceding)base=preceding.y;
-          else if(sector>1)continue;
+          else if(sector>1){
+            // The sensor may expose S2 before this card has seen S1.
+            // Recover available earlier sectors for this same lap.
+            for(let prior=1;prior<sector;prior++){
+              const priorTime=this.seconds(raw["sector_"+prior]);
+              if(priorTime!==null&&Number(raw["sector_"+prior+"_lap"])===n)
+                base+=this.sectorPace[prior-1]-priorTime;
+              else {base=NaN;break;}
+            }
+            if(!Number.isFinite(base))continue;
+          }
           const y=base+(this.sectorPace[sector-1]-duration);
           history.set(key,{lap:n-1+sector/3,y,estimated:false,sector});
         }
@@ -213,7 +224,9 @@ class F1RaceTrace extends HTMLElement {
         if(!this.liveHistory.has(d.id))this.liveHistory.set(d.id,new Map());
         const history=this.liveHistory.get(d.id);
         for(const p of d.points)if(!history.has(p.lap))history.set(p.lap,{...p});
-        d.points=[...history.values()].filter(p=>p.lap<=lap).sort((a,b)=>a.lap-b.lap);
+        // Sector events have their own fractional-lap keys; retain them
+        // alongside frozen lap points instead of replacing them.
+        d.points=[...history.values(),...(this.sectorHistory.get(d.id)?.values()||[])].filter(p=>p.lap<=lap).sort((a,b)=>a.lap-b.lap);
       }
     }
     for(const d of traces)d.points=d.points.filter(p=>Number.isFinite(p.y));
