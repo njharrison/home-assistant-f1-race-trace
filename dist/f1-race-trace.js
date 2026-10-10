@@ -16,6 +16,7 @@ class F1RaceTrace extends HTMLElement {
     this.lastLap = null;
     this.liveHistory = new Map();
     this.sectorHistory = new Map();
+    this.sectorPace = null;
   }
   setConfig(config) {
     this.config = {entity:"sensor.f1_drivers_driver_positions",lap_entity:"sensor.f1_race_lap_count",height:"85vh",archive_url:null,...config};
@@ -23,6 +24,7 @@ class F1RaceTrace extends HTMLElement {
     this.fixedScale=null;
     this.liveHistory.clear();
     this.sectorHistory.clear();
+    this.sectorPace=null;
     this.loadArchive();
     this.render();
   }
@@ -157,18 +159,29 @@ class F1RaceTrace extends HTMLElement {
       previous=n;
     }
     const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="AVERAGE"||this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:archived&&this.reference==="AVERAGE" ? -( (this.archive.laps.find(r=>r.driver===d.label&&r.lap===p.lap)?.lap_end_session_seconds ?? 0) - this.archive.laps.filter(r=>r.lap===1).reduce((min,r)=>Math.min(min,r.lap_end_session_seconds),Infinity) - (p.lap-1)*averagePace ) : this.reference==="AVERAGE" ? -(p.y+(leaderDeviation.get(p.lap)??0)) : -(p.y-(refMap.get(p.lap)||0))}))})).filter(d=>d.points.length);
-    // Capture completed sector events once per driver/lap/sector. Current
-    // gap is a snapshot, not a sector-line crossing gap: these are approximate
-    // anchored observations, never rewritten by subsequent gap updates.
+    // Calculate a stable, race-wide reference for each sector. Scale the
+    // observed proportions to the same lap baseline used by the full laps.
     if(!archived){
+      if(!this.sectorPace){
+        const samples=[[],[],[]];
+        for(const raw of liveDrivers)for(let i=1;i<=3;i++){
+          const t=this.seconds(raw["sector_"+i]);
+          if(t!==null&&t>10&&t<120)samples[i-1].push(t);
+        }
+        if(samples.every(a=>a.length>=5)){
+          const means=samples.map(a=>{
+            const v=a.sort((x,y)=>x-y);
+            const mid=v.slice(Math.floor(v.length*.15),Math.max(Math.floor(v.length*.15)+1,Math.ceil(v.length*.85)));
+            return mid.reduce((x,y)=>x+y,0)/mid.length;
+          });
+          const total=means.reduce((a,b)=>a+b,0);
+          this.sectorPace=means.map(v=>v/total*averagePace);
+        }
+      }
       const liveById=new Map(liveDrivers.map(d=>[String(d.racing_number||d.tla),d]));
-      const leadPoint=traces.find(d=>Number(d.position)===1)?.points.at(-1);
-      const leadY=Number.isFinite(leadPoint?.y)?leadPoint.y:0;
       for(const d of traces){
         const raw=liveById.get(d.id);
         if(!raw)continue;
-        const gap=Number(raw.current_position)===1?0:this.seconds(raw.gap_to_leader);
-        if(gap===null)continue;
         if(!this.sectorHistory.has(d.id))this.sectorHistory.set(d.id,new Map());
         const history=this.sectorHistory.get(d.id);
         for(let sector=1;sector<=3;sector++){
@@ -177,11 +190,17 @@ class F1RaceTrace extends HTMLElement {
           if(!Number.isInteger(n)||n<1||n>lap||duration===null)continue;
           const key=n+":"+sector;
           if(history.has(key))continue;
-          const x=n-1+sector/3;
-          // Anchor against the most recently known leader trace value.
-          // This is approximate because gap_to_leader is not timestamped at
-          // the sector crossing; preserve it instead of shifting history.
-          history.set(key,{lap:x,y:leadY-gap,estimated:true,sector});
+          // Use the driver's last known completed-lap trace as a fixed
+          // anchor, then accumulate sector deviations from reference pace.
+          const anchor=[...d.points,...history.values()].filter(p=>p.lap<=n-1+1e-6).sort((a,b)=>b.lap-a.lap)[0];
+          if(!anchor||!this.sectorPace)continue;
+          let base=anchor.y;
+          if(anchor.lap<n-1-1e-6)continue;
+          const preceding=[...history.values()].filter(p=>p.lap>n-1&&p.lap<n-1+sector/3).sort((a,b)=>b.lap-a.lap)[0];
+          if(preceding)base=preceding.y;
+          else if(sector>1)continue;
+          const y=base+(this.sectorPace[sector-1]-duration);
+          history.set(key,{lap:n-1+sector/3,y,estimated:false,sector});
         }
         d.points.push(...history.values());
         d.points.sort((a,b)=>a.lap-b.lap);
