@@ -132,7 +132,7 @@ class F1RaceTrace extends HTMLElement {
     const lap=Math.max(1,Number(hass?.states?.[this.config.lap_entity]?.state)||1);
     if(this.lastLap!==null&&lap<this.lastLap){this.liveHistory.clear();this.fixedScale=null;this.fixedPace=null;}
     this.lastLap=lap;
-    const active=drivers.filter(d=>d.points.some(p=>p.lap<=lap)&&!this.hiddenDrivers.has(d.id));
+    const active=drivers.filter(d=>!this.hiddenDrivers.has(d.id)&&((this.config.archive_url&&d.points.some(p=>p.lap<=lap))||!this.config.archive_url));
     const reference=drivers.find(d=>d.id===this.reference);
     const refMap=new Map(reference?.points.filter(p=>p.lap<=lap).map(p=>[p.lap,p.y])||[]);
     // Race trace: subtract cumulative reference pace from each driver's elapsed
@@ -160,7 +160,7 @@ class F1RaceTrace extends HTMLElement {
       leaderDeviation.set(n,deviation);
       previous=n;
     }
-    const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="AVERAGE"||this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:archived&&this.reference==="AVERAGE" ? -( (this.archive.laps.find(r=>r.driver===d.label&&r.lap===p.lap)?.lap_end_session_seconds ?? 0) - this.archive.laps.filter(r=>r.lap===1).reduce((min,r)=>Math.min(min,r.lap_end_session_seconds),Infinity) - (p.lap-1)*averagePace ) : this.reference==="AVERAGE" ? -(p.y+(leaderDeviation.get(p.lap)??0)) : -(p.y-(refMap.get(p.lap)||0))}))})).filter(d=>d.points.length);
+    const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="AVERAGE"||this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:archived&&this.reference==="AVERAGE" ? -( (this.archive.laps.find(r=>r.driver===d.label&&r.lap===p.lap)?.lap_end_session_seconds ?? 0) - this.archive.laps.filter(r=>r.lap===1).reduce((min,r)=>Math.min(min,r.lap_end_session_seconds),Infinity) - (p.lap-1)*averagePace ) : this.reference==="AVERAGE" ? -(p.y+(leaderDeviation.get(p.lap)??0)) : -(p.y-(refMap.get(p.lap)||0))}))}));
     // Calculate a stable, race-wide reference for each sector. Scale the
     // observed proportions to the same lap baseline used by the full laps.
     if(!archived){
@@ -251,9 +251,11 @@ class F1RaceTrace extends HTMLElement {
         let state=this.gapSamples.get(id);
         const anchorX=currentLap-1+done/3;
         const anchor=[...d.points].filter(p=>p.lap<=anchorX+1e-5).sort((a,b)=>b.lap-a.lap)[0] || [...d.points].sort((a,b)=>b.lap-a.lap)[0];
-        if(!anchor)continue;
+        // A driver may have no complete lap history at all. Anchor the first
+        // live observation to the current leader-relative gap instead.
+        const baseY=anchor?.y ?? -gap;
         if(!state||state.stage!==stage){
-          state={stage,start:now,baseGap:gap,baseY:anchor.y,samples:[]};
+          state={stage,start:now,baseGap:gap,baseY,samples:[]};
           this.gapSamples.set(id,state);
         }
         // At most 95% of the current sector until its actual timing
