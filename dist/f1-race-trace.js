@@ -250,7 +250,7 @@ class F1RaceTrace extends HTMLElement {
         const id=d.id;
         let state=this.gapSamples.get(id);
         const anchorX=currentLap-1+done/3;
-        const anchor=[...d.points].filter(p=>p.lap<=anchorX+1e-5).sort((a,b)=>b.lap-a.lap)[0];
+        const anchor=[...d.points].filter(p=>p.lap<=anchorX+1e-5).sort((a,b)=>b.lap-a.lap)[0] || [...d.points].sort((a,b)=>b.lap-a.lap)[0];
         if(!anchor)continue;
         if(!state||state.stage!==stage){
           state={stage,start:now,baseGap:gap,baseY:anchor.y,samples:[]};
@@ -273,6 +273,8 @@ class F1RaceTrace extends HTMLElement {
       }
     }
     for(const d of traces)d.points=d.points.filter(p=>Number.isFinite(p.y));
+    const chartLap=Math.max(lap,...traces.flatMap(d=>d.points.map(p=>p.lap)).filter(Number.isFinite),1);
+    const chartEnd=Math.max(lap+0.35,chartLap+0.1);
     const values=traces.flatMap(d=>d.points.map(p=>p.y));
     let low=Math.min(0,...values),high=Math.max(0,...values);
     const margin=Math.max(3,(high-low)*.08);low-=margin;high+=margin;
@@ -280,11 +282,11 @@ class F1RaceTrace extends HTMLElement {
     else {this.fixedScale.low=Math.min(this.fixedScale.low,low);this.fixedScale.high=Math.max(this.fixedScale.high,high);}
     ({low,high}=this.fixedScale);
     const W=1400,H=720,L=78,R=110,T=40,B=60;
-    const x=n=>L+(Math.max(1,n)-1)/Math.max(1,lap-1)*(W-L-R);
+    const x=n=>L+(Math.max(1,n)-1)/Math.max(1,chartEnd-1)*(W-L-R);
     const y=n=>T+(high-n)/(high-low)*(H-T-B);
     let grid="";
     for(let i=0;i<=8;i++){const v=low+(high-low)*i/8;grid+=`<line x1="${L}" y1="${y(v)}" x2="${W-R}" y2="${y(v)}" stroke="#263245"/><text x="${L-9}" y="${y(v)+5}" text-anchor="end" fill="#93a4b9" font-size="17">${v.toFixed(1)}s</text>`;}
-    for(let n=1;n<=lap;n+=Math.max(1,Math.ceil(lap/14)))grid+=`<line x1="${x(n)}" y1="${T}" x2="${x(n)}" y2="${H-B}" stroke="#202b39"/><text x="${x(n)}" y="${H-20}" text-anchor="middle" fill="#93a4b9" font-size="17">${n}</text>`;
+    for(let n=1;n<=chartEnd;n+=Math.max(1,Math.ceil(chartEnd/14)))grid+=`<line x1="${x(n)}" y1="${T}" x2="${x(n)}" y2="${H-B}" stroke="#202b39"/><text x="${x(n)}" y="${H-20}" text-anchor="middle" fill="#93a4b9" font-size="17">${n}</text>`;
     const lines=traces.map(d=>{
       const path=d.points.map(p=>`${x(p.lap).toFixed(1)},${y(p.y).toFixed(1)}`).join(" ");
       const last=d.points.at(-1);
