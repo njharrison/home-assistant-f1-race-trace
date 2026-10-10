@@ -17,6 +17,7 @@ class F1RaceTrace extends HTMLElement {
     this.liveHistory = new Map();
     this.sectorHistory = new Map();
     this.sectorPace = null;
+    this.gapSamples = new Map();
   }
   setConfig(config) {
     this.config = {entity:"sensor.f1_drivers_driver_positions",lap_entity:"sensor.f1_race_lap_count",height:"85vh",archive_url:null,...config};
@@ -25,6 +26,7 @@ class F1RaceTrace extends HTMLElement {
     this.liveHistory.clear();
     this.sectorHistory.clear();
     this.sectorPace=null;
+    this.gapSamples.clear();
     this.loadArchive();
     this.render();
   }
@@ -227,6 +229,47 @@ class F1RaceTrace extends HTMLElement {
         // Sector events have their own fractional-lap keys; retain them
         // alongside frozen lap points instead of replacing them.
         d.points=[...history.values(),...(this.sectorHistory.get(d.id)?.values()||[])].filter(p=>p.lap<=lap).sort((a,b)=>a.lap-b.lap);
+      }
+    }
+    // Intra-sector snapshots: infer fractional progress from the time since
+    // the most recently observed sector transition. The source supplies gaps,
+    // not distance, so these points are estimates and never replace anchors.
+    if(!archived&&this.sectorPace){
+      const now=Date.now();
+      const liveById=new Map(liveDrivers.map(d=>[String(d.racing_number||d.tla),d]));
+      for(const d of traces){
+        const raw=liveById.get(d.id);
+        if(!raw)continue;
+        const gap=Number(raw.current_position)===1?0:this.seconds(raw.gap_to_leader);
+        if(gap===null)continue;
+        const currentLap=Number(raw.sector_current_lap)||Number(raw.completed_laps)+1;
+        if(!Number.isInteger(currentLap)||currentLap<1)continue;
+        const done=raw.sector_state==="s3_done"?3:raw.sector_state==="s2_done"?2:raw.sector_state==="s1_done"?1:0;
+        const nextSector=Math.min(3,done+1);
+        const stage=currentLap+":"+done;
+        const id=d.id;
+        let state=this.gapSamples.get(id);
+        const anchorX=currentLap-1+done/3;
+        const anchor=[...d.points].filter(p=>p.lap<=anchorX+1e-5).sort((a,b)=>b.lap-a.lap)[0];
+        if(!anchor)continue;
+        if(!state||state.stage!==stage){
+          state={stage,start:now,baseGap:gap,baseY:anchor.y,samples:[]};
+          this.gapSamples.set(id,state);
+        }
+        // At most 95% of the current sector until its actual timing
+        // measurement arrives; avoid fabricated sector crossings.
+        const duration=this.sectorPace[nextSector-1];
+        const fraction=Math.min(.95,Math.max(0,(now-state.start)/1000/duration));
+        const x=anchorX+fraction/3;
+        // Relative gap changes are real observations; the baseline's
+        // fractional pace correction is an estimate between sector lines.
+        const y=state.baseY-(gap-state.baseGap);
+        if(fraction>0.005&&(!state.samples.length||x>state.samples.at(-1).lap+0.0001)){
+          state.samples.push({lap:x,y,estimated:true});
+          if(state.samples.length>180)state.samples.shift();
+        }
+        d.points.push(...state.samples.filter(p=>p.lap>anchorX&&p.lap<anchorX+1/3));
+        d.points.sort((a,b)=>a.lap-b.lap);
       }
     }
     for(const d of traces)d.points=d.points.filter(p=>Number.isFinite(p.y));
