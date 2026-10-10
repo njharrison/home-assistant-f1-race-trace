@@ -141,7 +141,20 @@ class F1RaceTrace extends HTMLElement {
     const estimatedPace=sample.length?sample.reduce((a,b)=>a+b,0)/sample.length:95;
     if(this.fixedPace===null&&sample.length>=8)this.fixedPace=estimatedPace;
     const averagePace=this.fixedPace??estimatedPace;
-    const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="AVERAGE"||this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:archived&&this.reference==="AVERAGE" ? -( (this.archive.laps.find(r=>r.driver===d.label&&r.lap===p.lap)?.lap_end_session_seconds ?? 0) - this.archive.laps.filter(r=>r.lap===1).reduce((min,r)=>Math.min(min,r.lap_end_session_seconds),Infinity) - (p.lap-1)*averagePace ) : this.reference==="AVERAGE" ? -(p.y-p.lap*0) : -(p.y-(refMap.get(p.lap)||0))}))})).filter(d=>d.points.length);
+    // Live gap-to-leader is only a relative offset. Add the leader's
+    // cumulative pace deviation to give every car a common average baseline.
+    // Only use consecutive known laps; missing laps cannot be invented.
+    const leaderLive=[...liveDrivers].sort((a,b)=>Number(a.current_position||999)-Number(b.current_position||999))[0];
+    const leaderTimes=new Map(Object.entries(leaderLive?.laps||{}).map(([k,v])=>[Number(k),this.seconds(v)]).filter(([k,v])=>Number.isInteger(k)&&v!==null));
+    const leaderDeviation=new Map();
+    let deviation=0,previous=null;
+    for(const n of [...leaderTimes.keys()].sort((a,b)=>a-b)){
+      if(previous!==null&&n!==previous+1)deviation=NaN;
+      if(Number.isFinite(deviation))deviation+=leaderTimes.get(n)-averagePace;
+      leaderDeviation.set(n,deviation);
+      previous=n;
+    }
+    const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="AVERAGE"||this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:archived&&this.reference==="AVERAGE" ? -( (this.archive.laps.find(r=>r.driver===d.label&&r.lap===p.lap)?.lap_end_session_seconds ?? 0) - this.archive.laps.filter(r=>r.lap===1).reduce((min,r)=>Math.min(min,r.lap_end_session_seconds),Infinity) - (p.lap-1)*averagePace ) : this.reference==="AVERAGE" ? -(p.y+(leaderDeviation.get(p.lap)??0)) : -(p.y-(refMap.get(p.lap)||0))}))})).filter(d=>d.points.length);
     // Lock the already observed live points so a fresh gap cannot rewrite
     // the entire historical trace every second.
     if(!archived){
@@ -152,6 +165,7 @@ class F1RaceTrace extends HTMLElement {
         d.points=[...history.values()].filter(p=>p.lap<=lap).sort((a,b)=>a.lap-b.lap);
       }
     }
+    for(const d of traces)d.points=d.points.filter(p=>Number.isFinite(p.y));
     const values=traces.flatMap(d=>d.points.map(p=>p.y));
     let low=Math.min(0,...values),high=Math.max(0,...values);
     const margin=Math.max(3,(high-low)*.08);low-=margin;high+=margin;
