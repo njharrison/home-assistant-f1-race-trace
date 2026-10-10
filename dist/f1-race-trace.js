@@ -11,9 +11,16 @@ class F1RaceTrace extends HTMLElement {
     this.archiveError = "";
     this.archiveUrl = "";
     this.archiveLoading = false;
+    this.fixedPace = null;
+    this.fixedScale = null;
+    this.lastLap = null;
+    this.liveHistory = new Map();
   }
   setConfig(config) {
     this.config = {entity:"sensor.f1_drivers_driver_positions",lap_entity:"sensor.f1_race_lap_count",height:"85vh",archive_url:null,...config};
+    this.fixedPace=null;
+    this.fixedScale=null;
+    this.liveHistory.clear();
     this.loadArchive();
     this.render();
   }
@@ -117,6 +124,8 @@ class F1RaceTrace extends HTMLElement {
     const liveDrivers=Array.isArray(raw)?raw:[];
     const drivers=(this.config.archive_url&&this.archiveDrivers(liveDrivers))||this.data(liveDrivers);
     const lap=Math.max(1,Number(hass?.states?.[this.config.lap_entity]?.state)||1);
+    if(this.lastLap!==null&&lap<this.lastLap){this.liveHistory.clear();this.fixedScale=null;this.fixedPace=null;}
+    this.lastLap=lap;
     const active=drivers.filter(d=>d.points.some(p=>p.lap<=lap)&&!this.hiddenDrivers.has(d.id));
     const reference=drivers.find(d=>d.id===this.reference);
     const refMap=new Map(reference?.points.filter(p=>p.lap<=lap).map(p=>[p.lap,p.y])||[]);
@@ -129,11 +138,26 @@ class F1RaceTrace extends HTMLElement {
     // Trim extreme pit/safety-car laps; estimate representative green-flag pace.
     const start=Math.floor(sortedTimes.length*.15),end=Math.ceil(sortedTimes.length*.75);
     const sample=sortedTimes.slice(start,end);
-    const averagePace=sample.length?sample.reduce((a,b)=>a+b,0)/sample.length:95;
+    const estimatedPace=sample.length?sample.reduce((a,b)=>a+b,0)/sample.length:95;
+    if(this.fixedPace===null&&sample.length>=8)this.fixedPace=estimatedPace;
+    const averagePace=this.fixedPace??estimatedPace;
     const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="AVERAGE"||this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:archived&&this.reference==="AVERAGE" ? -( (this.archive.laps.find(r=>r.driver===d.label&&r.lap===p.lap)?.lap_end_session_seconds ?? 0) - this.archive.laps.filter(r=>r.lap===1).reduce((min,r)=>Math.min(min,r.lap_end_session_seconds),Infinity) - (p.lap-1)*averagePace ) : this.reference==="AVERAGE" ? -(p.y-p.lap*0) : -(p.y-(refMap.get(p.lap)||0))}))})).filter(d=>d.points.length);
+    // Lock the already observed live points so a fresh gap cannot rewrite
+    // the entire historical trace every second.
+    if(!archived){
+      for(const d of traces){
+        if(!this.liveHistory.has(d.id))this.liveHistory.set(d.id,new Map());
+        const history=this.liveHistory.get(d.id);
+        for(const p of d.points)if(!history.has(p.lap))history.set(p.lap,{...p});
+        d.points=[...history.values()].filter(p=>p.lap<=lap).sort((a,b)=>a.lap-b.lap);
+      }
+    }
     const values=traces.flatMap(d=>d.points.map(p=>p.y));
     let low=Math.min(0,...values),high=Math.max(0,...values);
     const margin=Math.max(3,(high-low)*.08);low-=margin;high+=margin;
+    if(!this.fixedScale)this.fixedScale={low,high};
+    else {this.fixedScale.low=Math.min(this.fixedScale.low,low);this.fixedScale.high=Math.max(this.fixedScale.high,high);}
+    ({low,high}=this.fixedScale);
     const W=1400,H=720,L=78,R=110,T=40,B=60;
     const x=n=>L+(Math.max(1,n)-1)/Math.max(1,lap-1)*(W-L-R);
     const y=n=>T+(high-n)/(high-low)*(H-T-B);
