@@ -160,7 +160,7 @@ class F1RaceTrace extends HTMLElement {
       leaderDeviation.set(n,deviation);
       previous=n;
     }
-    const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="AVERAGE"||this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:archived&&this.reference==="AVERAGE" ? -( (this.archive.laps.find(r=>r.driver===d.label&&r.lap===p.lap)?.lap_end_session_seconds ?? 0) - this.archive.laps.filter(r=>r.lap===1).reduce((min,r)=>Math.min(min,r.lap_end_session_seconds),Infinity) - (p.lap-1)*averagePace ) : this.reference==="AVERAGE" ? -(p.y+(leaderDeviation.get(p.lap)??0)) : -(p.y-(refMap.get(p.lap)||0))}))}));
+    const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="AVERAGE"||this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:archived&&this.reference==="AVERAGE" ? -( (this.archive.laps.find(r=>r.driver===d.label&&r.lap===p.lap)?.lap_end_session_seconds ?? 0) - this.archive.laps.filter(r=>r.lap===1).reduce((min,r)=>Math.min(min,r.lap_end_session_seconds),Infinity) - (p.lap-1)*averagePace ) : this.reference==="AVERAGE" ? -(p.y+(leaderDeviation.get(p.lap)??0)) : -(p.y-(refMap.get(p.lap)||0))}))})).filter(d=>d.points.length);
     // Calculate a stable, race-wide reference for each sector. Scale the
     // observed proportions to the same lap baseline used by the full laps.
     if(!archived){
