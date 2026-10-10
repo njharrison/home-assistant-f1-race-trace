@@ -15,12 +15,14 @@ class F1RaceTrace extends HTMLElement {
     this.fixedScale = null;
     this.lastLap = null;
     this.liveHistory = new Map();
+    this.sectorHistory = new Map();
   }
   setConfig(config) {
     this.config = {entity:"sensor.f1_drivers_driver_positions",lap_entity:"sensor.f1_race_lap_count",height:"85vh",archive_url:null,...config};
     this.fixedPace=null;
     this.fixedScale=null;
     this.liveHistory.clear();
+    this.sectorHistory.clear();
     this.loadArchive();
     this.render();
   }
@@ -155,6 +157,36 @@ class F1RaceTrace extends HTMLElement {
       previous=n;
     }
     const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="AVERAGE"||this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:archived&&this.reference==="AVERAGE" ? -( (this.archive.laps.find(r=>r.driver===d.label&&r.lap===p.lap)?.lap_end_session_seconds ?? 0) - this.archive.laps.filter(r=>r.lap===1).reduce((min,r)=>Math.min(min,r.lap_end_session_seconds),Infinity) - (p.lap-1)*averagePace ) : this.reference==="AVERAGE" ? -(p.y+(leaderDeviation.get(p.lap)??0)) : -(p.y-(refMap.get(p.lap)||0))}))})).filter(d=>d.points.length);
+    // Capture completed sector events once per driver/lap/sector. Current
+    // gap is a snapshot, not a sector-line crossing gap: these are approximate
+    // anchored observations, never rewritten by subsequent gap updates.
+    if(!archived){
+      const liveById=new Map(liveDrivers.map(d=>[String(d.racing_number||d.tla),d]));
+      const leadPoint=traces.find(d=>Number(d.position)===1)?.points.at(-1);
+      const leadY=Number.isFinite(leadPoint?.y)?leadPoint.y:0;
+      for(const d of traces){
+        const raw=liveById.get(d.id);
+        if(!raw)continue;
+        const gap=Number(raw.current_position)===1?0:this.seconds(raw.gap_to_leader);
+        if(gap===null)continue;
+        if(!this.sectorHistory.has(d.id))this.sectorHistory.set(d.id,new Map());
+        const history=this.sectorHistory.get(d.id);
+        for(let sector=1;sector<=3;sector++){
+          const n=Number(raw["sector_"+sector+"_lap"]);
+          const duration=this.seconds(raw["sector_"+sector]);
+          if(!Number.isInteger(n)||n<1||n>lap||duration===null)continue;
+          const key=n+":"+sector;
+          if(history.has(key))continue;
+          const x=n-1+sector/3;
+          // Anchor against the most recently known leader trace value.
+          // This is approximate because gap_to_leader is not timestamped at
+          // the sector crossing; preserve it instead of shifting history.
+          history.set(key,{lap:x,y:leadY-gap,estimated:true,sector});
+        }
+        d.points.push(...history.values());
+        d.points.sort((a,b)=>a.lap-b.lap);
+      }
+    }
     // Lock the already observed live points so a fresh gap cannot rewrite
     // the entire historical trace every second.
     if(!archived){
@@ -200,7 +232,7 @@ class F1RaceTrace extends HTMLElement {
       <div class="head"><div><div class="title">RACE TRACE <span style="color:#ff8700">/ F1</span></div><div class="subtitle">LAP ${lap} · ${drivers.length} DRIVERS · ${traces.length} TRACES · ${archived?"ARCHIVE":"LIVE"}</div></div><label>REFERENCE <select id="reference">${opts.map(o=>`<option value="${this.escape(o.id)}" ${this.reference===o.id?"selected":""}>${this.escape(o.label)}</option>`).join("")}</select></label></div>
       ${traces.length?`<div class="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><rect width="${W}" height="${H}" fill="#0b121d"/>${grid}<line x1="${L}" y1="${y(0)}" x2="${W-R}" y2="${y(0)}" stroke="#8393a6" stroke-dasharray="8 7"/>${lines}</svg></div>`:'<div class="empty">Waiting for replay driver timing data.</div>'}
       <div class="legend">${drivers.map(d=>`<button data-driver="${this.escape(d.id)}" class="${this.hiddenDrivers.has(d.id)?"off":""}"><span class="dot" style="background:${d.color}"></span>${this.escape(d.label)} · P${this.escape(d.position)}</button>`).join("")}</div>
-      <div class="note">${archived?"Historical FastF1 lap-end timing. Gaps measured at the timing line, not simultaneous car positions; lapped cars are omitted when not comparable. Squares indicate pit-in laps.":"Live fallback: gaps estimated from available replay laps. "+(this.archiveError?"Archive unavailable: "+this.escape(this.archiveError):"Waiting for historical archive.")}</div>
+      <div class="note">${archived?"Historical FastF1 lap-end timing. Gaps measured at the timing line, not simultaneous car positions; lapped cars are omitted when not comparable. Squares indicate pit-in laps.":"Live: sector points are captured as approximate gap snapshots; they are not exact sector-crossing gaps. "+(this.archiveError?"Archive unavailable: "+this.escape(this.archiveError):"Waiting for historical archive.")}</div>
     </ha-card>`;
     this.shadowRoot.getElementById("reference")?.addEventListener("change",e=>{this.reference=e.target.value;this.render();});
     this.shadowRoot.querySelectorAll("[data-driver]").forEach(b=>b.addEventListener("click",()=>{const id=b.dataset.driver;this.hiddenDrivers.has(id)?this.hiddenDrivers.delete(id):this.hiddenDrivers.add(id);this.render();}));
