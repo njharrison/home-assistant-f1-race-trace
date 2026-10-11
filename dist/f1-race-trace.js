@@ -382,19 +382,6 @@ class F1RaceTrace extends HTMLElement {
       const leaderId=String(leaderLive?.racing_number||leaderLive?.tla||"");
       const leaderRaw=rawById.get(leaderId);
       const leaderGap=leaderRaw?0:null;
-      // Shared continuous baseline, interpolated through each lap.
-      const baseline=new Map([[0,0]]);
-      let cumulative=0;
-      for(let n=1;n<=lap;n++){
-        cumulative+=averagePace-(leaderTimes.get(n)??averagePace);
-        baseline.set(n,cumulative);
-      }
-      const baselineAt=x=>{
-        const n=Math.max(0,Math.min(lap,Math.floor(x)));
-        const fraction=Math.max(0,Math.min(1,x-n));
-        const start=baseline.get(n)??cumulative;
-        return start+fraction*((baseline.get(n+1)??start)-start);
-      };
       // Recorded observations are the canonical history. Rebuild them on
       // every fetch, including when the card has already drawn a live trace.
       const saved=this.persistedRecording?.samples||[];
@@ -423,6 +410,23 @@ class F1RaceTrace extends HTMLElement {
       }
       durations.sort((a,b)=>a-b);
       const replayLapDuration=durations.length?durations[Math.floor(durations.length/2)]:averagePace;
+      // The recorded race clock is the timing authority for BOTH the
+      // intra-lap detail and the average-pace reference. A baseline built
+      // from a different lap-time source causes a repeated sawtooth.
+      // Ignore lap 1: this recording begins before its actual start.
+      const baselineAt=x=>{
+        const whole=Math.max(1,Math.floor(x));
+        const fraction=Math.max(0,Math.min(1,x-whole));
+        let value=0;
+        for(let n=2;n<=whole;n++){
+          const t0=startByLap.get(n),t1=startByLap.get(n+1);
+          if(t0!==undefined&&t1!==undefined&&t1>t0)
+            value+=averagePace-(t1-t0);
+        }
+        const t0=startByLap.get(whole+1),t1=startByLap.get(whole+2);
+        const duration=t0!==undefined&&t1!==undefined&&t1>t0?t1-t0:averagePace;
+        return value+fraction*(averagePace-duration);
+      };
       for(const n of lapsSorted){
         const rows=byLap.get(n);
         const first=startByLap.get(n);
