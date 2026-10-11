@@ -477,45 +477,76 @@ class F1RaceTrace extends HTMLElement {
       // Use the shared race clock and gap alone for historical positions.
       const plottedX=(raceX,gap)=>raceX-Math.max(0,gap)/averagePace;
       const advanceX=(previous,target)=>previous?Math.max(previous.lap,target):target;
+      // Collect all observations before reconstruction so sector transitions
+      // can be interpolated using the actual recorded timestamps.
+      const rawHistory=new Map();
       for(const n of lapsSorted){
         const rows=byLap.get(n);
-        const first=startByLap.get(n);
-        const next=startByLap.get(n+1);
+        const first=startByLap.get(n),next=startByLap.get(n+1);
         const duration=next!==undefined&&next>first?next-first:replayLapDuration;
         for(const sample of rows){
-          const elapsed=Math.max(0,Number(sample.timestamp)-first);
-          // Never project an unfinished lap to its far boundary.
-          const x=Math.max(1,n-1+Math.min(.999,elapsed/Math.max(1,duration)));
+          const at=Number(sample.timestamp);
+          const elapsed=Math.max(0,at-first);
+          const raceX=Math.max(1,n-1+Math.min(.999,elapsed/Math.max(1,duration)));
           for(const row of sample.drivers||[]){
             const id=String(row.id);
-            if(!byId.has(id))byId.set(id,[]);
-            const history=byId.get(id);
-            const previous=history.at(-1);
-            const gapText=String(row.gap??"").trim();
-            // "LAP 17" is the leader's lap marker; "1 LAP" is a
-            // lapped driver's gap and must never be treated as zero.
-            const leaderMarker=/^LAP\s+\d+$/i.test(gapText);
-            const lapDeficit=gapText.match(/^\+?\s*(\d+)\s+L(?:AP(?:S)?)?$/i);
-            let gap=leaderMarker?0:this.seconds(gapText);
-            if(lapDeficit){
-              const minimum=Number(lapDeficit[1])*averagePace;
-              // Keep the first transition continuous with the last numeric
-              // gap. Until the feed supplies seconds again, a lap deficit
-              // is only an approximation, not a measured second gap.
-              const prior=previous?.gap;
-              // The lap counter replaces an exact second gap. Preserve the
-              // last measured gap rather than jumping a full lap instantly.
-              // With no previous measurement, use a lap-time estimate.
-              gap=Number.isFinite(prior)?Math.max(prior,minimum-averagePace*.5):minimum;
-            }
-            if(gap===null)continue;
-            // A gap increase can slow or stop the driver, but must not
-            // reverse their progress. Preserve identical X for verticals.
-            const rawX=plottedX(x,gap);
-            const driverX=advanceX(previous,rawX);
-            history.push({lap:driverX,raceLap:x,gap,at:sample.timestamp});
+            if(!rawHistory.has(id))rawHistory.set(id,[]);
+            const completed=Number(row.completed_laps)||0;
+            const sectorLap=Number(row.sector_current_lap);
+            const sector=row.sector_state==="s1_done"?1:row.sector_state==="s2_done"?2:row.sector_state==="s3_done"?3:0;
+            const sectorProgress=Number.isFinite(sectorLap)&&sectorLap>0&&sector>0
+              ?sectorLap-1+sector/3:completed;
+            rawHistory.get(id).push({row,at,raceX,progress:Math.max(completed,sectorProgress)});
           }
         }
+      }
+      for(const [id,rows] of rawHistory){
+        rows.sort((a,b)=>a.at-b.at);
+        // Timing-event milestones are actual completed sectors/laps. Build
+        // a continuous progress estimate between adjacent milestones rather
+        // than holding the previous sector for its entire duration.
+        const milestones=[];
+        for(const obs of rows){
+          const last=milestones.at(-1);
+          if(!last||obs.progress>last.progress+0.00001)
+            milestones.push({at:obs.at,progress:obs.progress});
+        }
+        let eventIndex=0,anchor=null;
+        const history=[];
+        for(const obs of rows){
+          while(eventIndex+1<milestones.length&&milestones[eventIndex+1].at<=obs.at)
+            eventIndex++;
+          const before=milestones[eventIndex];
+          const after=milestones[eventIndex+1];
+          let progress=obs.progress;
+          if(before&&after&&after.at>before.at){
+            const fraction=Math.max(0,Math.min(1,(obs.at-before.at)/(after.at-before.at)));
+            progress=before.progress+(after.progress-before.progress)*fraction;
+          }else if(before){
+            // A last sector with no subsequent timing event is incomplete:
+            // never extrapolate more than one sector.
+            progress=before.progress+Math.min(1/3,Math.max(0,obs.at-before.at)/Math.max(1,averagePace)*1.0);
+          }
+          const gapText=String(obs.row.gap??"").trim();
+          const leaderMarker=/^LAP\s+\d+$/i.test(gapText);
+          const lapDeficit=gapText.match(/^\+?\s*(\d+)\s+L(?:AP(?:S)?)?$/i);
+          let gap=leaderMarker?0:this.seconds(gapText);
+          if(gap!==null){
+            anchor={at:obs.at,progress,gap};
+          }else if(anchor&&(lapDeficit||!gapText)){
+            // Derive elapsed gap from the driver's sector progress relative
+            // to the race clock. Retain the last measured gap as an anchor.
+            gap=Math.max(0,anchor.gap+(obs.at-anchor.at)-(progress-anchor.progress)*averagePace);
+          }else if(lapDeficit){
+            gap=Number(lapDeficit[1])*averagePace;
+            anchor={at:obs.at,progress,gap};
+          }
+          if(gap===null)continue;
+          const previous=history.at(-1);
+          const driverX=advanceX(previous,plottedX(obs.raceX,gap));
+          history.push({lap:driverX,raceLap:obs.raceX,gap,at:obs.at});
+        }
+        byId.set(id,history);
       }
       if(this.config.debug){
         const bor=[...recordedDrivers.values()].filter(d=>d.tla==="BOR");
