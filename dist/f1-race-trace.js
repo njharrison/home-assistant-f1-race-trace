@@ -21,6 +21,9 @@ class F1RaceTrace extends HTMLElement {
     this.gapTraceHistory = new Map();
     this.gapClock = null;
     this.gapBaseline = null;
+    this.persistedRecording = null;
+    this.recordingFetchAt = 0;
+    this.recordingRun = null;
   }
   setConfig(config) {
     this.config = {entity:"sensor.f1_drivers_driver_positions",lap_entity:"sensor.f1_race_lap_count",height:"85vh",archive_url:null,...config};
@@ -33,6 +36,9 @@ class F1RaceTrace extends HTMLElement {
     this.gapTraceHistory.clear();
     this.gapClock=null;
     this.gapBaseline=null;
+    this.persistedRecording=null;
+    this.recordingFetchAt=0;
+    this.recordingRun=null;
     this.loadArchive();
     this.render();
   }
@@ -41,6 +47,27 @@ class F1RaceTrace extends HTMLElement {
     const s=hass.states[this.config.entity];
     const sig=JSON.stringify([s?.last_updated,s?.attributes?.drivers,hass.states[this.config.lap_entity]?.state]);
     if(sig!==this.signature){this.signature=sig;this.render();}
+    this.loadRecording();
+  }
+  async loadRecording(){
+    if(this.config.recording_url===false||this.config.timing_engine==="legacy")return;
+    const now=Date.now();
+    if(now-this.recordingFetchAt<5000)return;
+    this.recordingFetchAt=now;
+    try{
+      const response=await fetch(this.config.recording_url||"/local/f1-race-trace/live-recording.json",{cache:"no-store"});
+      if(!response.ok)return;
+      const data=await response.json();
+      if(data.schema_version!==1||!Array.isArray(data.samples))return;
+      if(this.recordingRun!==null&&this.recordingRun!==data.run){
+        this.gapTraceHistory.clear();
+        this.gapClock=null;
+        this.gapBaseline=null;
+      }
+      this.recordingRun=data.run;
+      this.persistedRecording=data;
+      this.render();
+    }catch(err){if(this.config.debug)console.warn("[F1 Race Trace] Recording unavailable",err);}
   }
   getCardSize(){return 12;}
   static getStubConfig(){return {type:"custom:f1-race-trace"};}
@@ -365,6 +392,48 @@ class F1RaceTrace extends HTMLElement {
           if(t!==undefined)this.gapBaseline.value+=averagePace-t;
         }
         this.gapBaseline.lap=lap;
+      }
+      // Restore gap observations captured by the add-on while the card was closed.
+      // This is a single, race-wide sample clock, not per-driver lap timing.
+      const saved=this.persistedRecording?.samples||[];
+      if(saved.length){
+        const byId=new Map();
+        for(const sample of saved){
+          const n=Number(sample.lap);
+          if(!Number.isFinite(n)||n<1||n>lap)continue;
+          for(const row of sample.drivers||[]){
+            const id=String(row.id);
+            const gap=/^LAP\\s+\\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
+            if(gap===null)continue;
+            const completed=Number(row.completed_laps)||0;
+            const done=row.sector_state==="s2_done"?2:row.sector_state==="s1_done"?1:0;
+            const stage=Math.max(n-1,completed)+done/3;
+            const x=Math.min(lap,Math.max(1,stage));
+            if(!byId.has(id))byId.set(id,[]);
+            byId.get(id).push({lap:x,gap,at:sample.timestamp});
+          }
+        }
+        for(const d of traces){
+          if(this.gapTraceHistory.has(d.id))continue;
+          const observations=byId.get(d.id)||[];
+          if(!observations.length)continue;
+          const first=observations[0];
+          const anchor=d.points.filter(p=>p.lap<=first.lap).at(-1);
+          const baselineAt=n=>-(leaderDeviation.get(Math.floor(n))??0);
+          const offset=anchor?anchor.y-(baselineAt(first.lap)-first.gap):0;
+          const restored=[];
+          let previousX=-Infinity;
+          for(const observation of observations){
+            const x=observation.lap;
+            if(x<previousX)continue;
+            const y=baselineAt(x)-observation.gap+offset;
+            if(x===previousX)restored[restored.length-1]={lap:x,y,estimated:true};
+            else restored.push({lap:x,y,estimated:true});
+            previousX=x;
+          }
+          const seed=d.points.filter(p=>p.lap<first.lap-.001);
+          this.gapTraceHistory.set(d.id,{points:[...seed,...restored],offset,lastGap:observations.at(-1).gap});
+        }
       }
       for(const d of traces){
         const raw=rawById.get(d.id);
