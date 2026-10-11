@@ -804,20 +804,26 @@ class F1RaceTrace extends HTMLElement {
     // Draw neutralised periods behind the cars; never infer them from gaps.
     const controlEvents=this.persistedRecording?.race_control||[];
     const recordedSamples=this.persistedRecording?.samples||[];
+    // Reuse the same lap-transition clock as the recorded traces.
+    // Sample lap counters are piecewise constant, so interpolating
+    // adjacent samples directly would pin events to a lap boundary.
+    const controlLapStarts=new Map();
+    for(const sample of recordedSamples){
+      const n=Number(sample.lap),t=Number(sample.timestamp);
+      if(Number.isFinite(n)&&Number.isFinite(t)&&!controlLapStarts.has(n))
+        controlLapStarts.set(n,t);
+    }
+    const controlAnchors=[...controlLapStarts].sort((a,b)=>a[1]-b[1]);
     const raceXAt=time=>{
-      if(!recordedSamples.length)return null;
-      let lo=0,hi=recordedSamples.length-1;
-      while(lo<hi){
-        const mid=(lo+hi)>>1;
-        if(Number(recordedSamples[mid].timestamp)<time)lo=mid+1;
-        else hi=mid;
-      }
-      const a=recordedSamples[Math.max(0,lo-1)];
-      const b=recordedSamples[lo];
-      const ta=Number(a.timestamp),tb=Number(b.timestamp);
-      const xa=Number(a.lap)-1,xb=Number(b.lap)-1;
-      if(!Number.isFinite(ta)||!Number.isFinite(tb))return null;
-      return ta<time&&tb>ta?xa+(xb-xa)*(time-ta)/(tb-ta):xb;
+      if(!Number.isFinite(time)||!controlAnchors.length)return null;
+      let index=0;
+      while(index+1<controlAnchors.length&&controlAnchors[index+1][1]<=time)index++;
+      const [n,t0]=controlAnchors[index];
+      const t1=controlAnchors[index+1]?.[1];
+      const prior=controlAnchors[index-1]?.[1];
+      const duration=t1!==undefined&&t1>t0?t1-t0
+        :prior!==undefined&&t0>prior?t0-prior:averagePace;
+      return Math.max(1,n-1+Math.max(0,(time-t0)/Math.max(1,duration)));
     };
     const controlPeriods=[];
     let caution=null;
@@ -849,10 +855,11 @@ class F1RaceTrace extends HTMLElement {
     // Consequently an event occurring at one instant is a diagonal line,
     // not a vertical lap boundary. The recorder's first observation anchors
     // wall-clock time to reference-lap coordinate x=1, y=0.
-    const timeOrigin=Number(recordedSamples[0]?.timestamp);
-    const timeBoundaryX=(time,ySeconds)=>
-      x(1+(time-timeOrigin+ySeconds)/averagePace);
-    const cautionBands=Number.isFinite(timeOrigin)?controlPeriods.map(p=>{
+    const timeBoundaryX=(time,ySeconds)=>{
+      const raceX=raceXAt(time);
+      return raceX===null?NaN:x(raceX+ySeconds/averagePace);
+    };
+    const cautionBands=controlAnchors.length?controlPeriods.map(p=>{
       if(!(p.end>p.start))return "";
       const color=p.type==="VSC"?"#e5b84b":"#f5a15b";
       const top=high,bottom=low;
