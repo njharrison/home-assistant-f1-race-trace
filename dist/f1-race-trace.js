@@ -18,6 +18,8 @@ class F1RaceTrace extends HTMLElement {
     this.sectorHistory = new Map();
     this.sectorPace = null;
     this.gapSamples = new Map();
+    this.gapTraceHistory = new Map();
+    this.gapClock = null;
   }
   setConfig(config) {
     this.config = {entity:"sensor.f1_drivers_driver_positions",lap_entity:"sensor.f1_race_lap_count",height:"85vh",archive_url:null,...config};
@@ -27,6 +29,8 @@ class F1RaceTrace extends HTMLElement {
     this.sectorHistory.clear();
     this.sectorPace=null;
     this.gapSamples.clear();
+    this.gapTraceHistory.clear();
+    this.gapClock=null;
     this.loadArchive();
     this.render();
   }
@@ -164,7 +168,7 @@ class F1RaceTrace extends HTMLElement {
     const liveDrivers=Array.isArray(raw)?raw:[];
     const drivers=(this.config.archive_url&&this.archiveDrivers(liveDrivers))||this.data(liveDrivers);
     const lap=Math.max(1,Number(hass?.states?.[this.config.lap_entity]?.state)||1);
-    if(this.lastLap!==null&&lap<this.lastLap){this.liveHistory.clear();this.fixedScale=null;this.fixedPace=null;}
+    if(this.lastLap!==null&&lap<this.lastLap){this.liveHistory.clear();this.sectorHistory.clear();this.gapSamples.clear();this.gapTraceHistory.clear();this.gapClock=null;this.fixedScale=null;this.fixedPace=null;}
     this.lastLap=lap;
     const active=drivers.filter(d=>!this.hiddenDrivers.has(d.id)&&((this.config.archive_url&&d.points.some(p=>p.lap<=lap))||!this.config.archive_url));
     const reference=drivers.find(d=>d.id===this.reference);
@@ -195,9 +199,10 @@ class F1RaceTrace extends HTMLElement {
       previous=n;
     }
     const traces=active.map(d=>({...d,points:d.points.filter(p=>p.lap<=lap&&(this.reference==="AVERAGE"||this.reference==="LEADER"||refMap.has(p.lap))).map(p=>({...p,y:archived&&this.reference==="AVERAGE" ? -( (this.archive.laps.find(r=>r.driver===d.label&&r.lap===p.lap)?.lap_end_session_seconds ?? 0) - this.archive.laps.filter(r=>r.lap===1).reduce((min,r)=>Math.min(min,r.lap_end_session_seconds),Infinity) - (p.lap-1)*averagePace ) : this.reference==="AVERAGE" ? -(p.y+(leaderDeviation.get(p.lap)??0)) : -(p.y-(refMap.get(p.lap)||0))}))})).filter(d=>d.points.length);
+    const useGapEngine=!archived&&this.config.timing_engine!=="legacy"&&this.reference==="AVERAGE";
     // Calculate a stable, race-wide reference for each sector. Scale the
     // observed proportions to the same lap baseline used by the full laps.
-    if(!archived){
+    if(!archived&&!useGapEngine){
       if(!this.sectorPace){
         const samples=[[],[],[]];
         for(const raw of liveDrivers)for(let i=1;i<=3;i++){
@@ -255,7 +260,7 @@ class F1RaceTrace extends HTMLElement {
     }
     // Lock the already observed live points so a fresh gap cannot rewrite
     // the entire historical trace every second.
-    if(!archived){
+    if(!archived&&!useGapEngine){
       for(const d of traces){
         if(!this.liveHistory.has(d.id))this.liveHistory.set(d.id,new Map());
         const history=this.liveHistory.get(d.id);
@@ -289,7 +294,7 @@ class F1RaceTrace extends HTMLElement {
     // Intra-sector snapshots: infer fractional progress from the time since
     // the most recently observed sector transition. The source supplies gaps,
     // not distance, so these points are estimates and never replace anchors.
-    if(!archived&&this.sectorPace){
+    if(!archived&&!useGapEngine&&this.sectorPace){
       const now=Date.now();
       const liveById=new Map(liveDrivers.map(d=>[String(d.racing_number||d.tla),d]));
       for(const d of traces){
@@ -331,6 +336,46 @@ class F1RaceTrace extends HTMLElement {
         const unique=new Map();
         for(const p of d.points)if(Number.isFinite(p.lap)&&Number.isFinite(p.y))unique.set(p.lap.toFixed(6),p);
         d.points=[...unique.values()].sort((a,b)=>a.lap-b.lap);
+      }
+    }
+    // v0.3: one shared race clock and gap-derived separation for all drivers.
+    // Completed laps seed historical traces, but never overwrite live samples.
+    // Lap/sector updates cannot individually snap a driver to another model.
+    if(useGapEngine){
+      const now=Date.now();
+      if(!this.gapClock||this.gapClock.lap!==lap)
+        this.gapClock={lap,start:now};
+      const fraction=Math.min(.98,Math.max(0,(now-this.gapClock.start)/1000/Math.max(1,averagePace)));
+      const liveX=Math.max(1,lap-1+fraction);
+      const leaderCompleted=leaderDeviation.get(lap-1);
+      const leaderPrior=leaderDeviation.get(lap-2);
+      const baseline=Number.isFinite(leaderCompleted)?-leaderCompleted:
+        Number.isFinite(leaderPrior)?-leaderPrior:0;
+      const rawById=new Map(liveDrivers.map(d=>[String(d.racing_number||d.tla),d]));
+      for(const d of traces){
+        const raw=rawById.get(d.id);
+        const gap=raw&&(/^LAP\\s+\\d+$/i.test(String(raw.gap_to_leader??"").trim())?0:this.seconds(raw.gap_to_leader));
+        let state=this.gapTraceHistory.get(d.id);
+        if(!state){
+          const seed=d.points.filter(p=>Number.isFinite(p.y)&&p.lap<liveX-.005).map(p=>({...p}));
+          const last=seed.at(-1);
+          // Align the live reference at the handoff; keep the observed
+          // gap changes thereafter without rescaling individual lap points.
+          state={points:seed,offset:last?last.y-(baseline-(gap??0)):0,lastGap:gap};
+          this.gapTraceHistory.set(d.id,state);
+        }
+        if(gap!==null&&gap!==undefined){
+          const target=baseline-gap+state.offset;
+          const last=state.points.at(-1);
+          if(!last||liveX>last.lap+.0001){
+            // Do not create a steep join when the initial historical anchor
+            // is already at the current lap boundary.
+            state.points.push({lap:liveX,y:target,estimated:true});
+            if(state.points.length>3000)state.points.splice(0,state.points.length-3000);
+          }
+          state.lastGap=gap;
+        }
+        d.points=state.points.filter(p=>p.lap<=lap);
       }
     }
     if(this.config.debug){
@@ -399,7 +444,7 @@ class F1RaceTrace extends HTMLElement {
       <div class="head"><div><div class="title">RACE TRACE <span style="color:#ff8700">/ F1</span></div><div class="subtitle">LAP ${lap} · ${drivers.length} DRIVERS · ${traces.length} TRACES · ${archived?"ARCHIVE":"LIVE"}</div></div><label>REFERENCE <select id="reference">${opts.map(o=>`<option value="${this.escape(o.id)}" ${this.reference===o.id?"selected":""}>${this.escape(o.label)}</option>`).join("")}</select></label></div>
       ${traces.length?`<div class="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><rect width="${W}" height="${H}" fill="#0b121d"/>${grid}<line x1="${L}" y1="${y(0)}" x2="${W-R}" y2="${y(0)}" stroke="#8393a6" stroke-dasharray="8 7"/>${lines}</svg></div>`:'<div class="empty">Waiting for replay driver timing data.</div>'}
       <div class="legend">${drivers.map(d=>`<button data-driver="${this.escape(d.id)}" class="${this.hiddenDrivers.has(d.id)?"off":""}"><span class="dot" style="background:${d.color}"></span>${this.escape(d.label)} · P${this.escape(d.position)}</button>`).join("")}</div>
-      <div class="note">${archived?"Historical FastF1 lap-end timing. Gaps measured at the timing line, not simultaneous car positions; lapped cars are omitted when not comparable. Squares indicate pit-in laps.":"Live: sector points are captured as approximate gap snapshots; they are not exact sector-crossing gaps. "+(this.archiveError?"Archive unavailable: "+this.escape(this.archiveError):"Waiting for historical archive.")}</div>
+      <div class="note">${archived?"Historical FastF1 lap-end timing. Gaps measured at the timing line, not simultaneous car positions; lapped cars are omitted when not comparable. Squares indicate pit-in laps.":"Live: shared race-clock gap traces; lap times seed historical data and do not snap live positions. "+(this.archiveError?"Archive unavailable: "+this.escape(this.archiveError):"Waiting for historical archive.")}</div>
     </ha-card>`;
     this.shadowRoot.getElementById("reference")?.addEventListener("change",e=>{this.reference=e.target.value;this.render();});
     this.shadowRoot.querySelectorAll("[data-driver]").forEach(b=>b.addEventListener("click",()=>{const id=b.dataset.driver;this.hiddenDrivers.has(id)?this.hiddenDrivers.delete(id):this.hiddenDrivers.add(id);this.render();}));
