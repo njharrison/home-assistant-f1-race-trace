@@ -528,56 +528,72 @@ class F1RaceTrace extends HTMLElement {
       }
       for(const [id,rows] of rawHistory){
         rows.sort((a,b)=>a.at-b.at);
-        // For historical samples, use completed-lap crossings as anchors.
-        // Sector fractions are timing checkpoints, not a reliable continuous
-        // speed profile: interpolating between them produces a sawtooth
-        // whenever sector pace differs from the assumed reference fractions.
-        // Only use a sector checkpoint for the unfinished live tail.
+        // Independently reconstruct the driver's progress from timing
+        // checkpoints. A sector is a crossing event, not a duration to add
+        // on every polling update. Its own *_lap field is authoritative.
         const milestones=[];
+        const seen=new Set();
         for(const obs of rows){
           const completed=Number(obs.row.completed_laps)||0;
-          const last=milestones.at(-1);
-          if(completed>0&&(!last||completed>last.progress))
-            milestones.push({at:obs.at,progress:completed});
+          const events=[];
+          if(completed>0)events.push({key:"lap:"+completed,progress:completed});
+          for(let k=1;k<=3;k++){
+            const sectorLap=Number(obs.row["sector_"+k+"_lap"]);
+            const duration=this.seconds(obs.row["sector_"+k]);
+            if(Number.isInteger(sectorLap)&&sectorLap>0&&duration!==null)
+              events.push({key:sectorLap+":"+k,progress:sectorLap-1+sectorBoundary[k]});
+          }
+          for(const event of events){
+            if(seen.has(event.key))continue;
+            seen.add(event.key);
+            milestones.push({at:obs.at,progress:event.progress});
+          }
         }
+        milestones.sort((a,b)=>a.at-b.at||a.progress-b.progress);
+        // Ignore stale or out-of-order sector readings. A checkpoint must
+        // represent strictly increasing distance.
+        const crossings=[];
+        for(const event of milestones)
+          if(!crossings.length||event.progress>crossings.at(-1).progress+0.00001)
+            crossings.push(event);
         let eventIndex=0,anchor=null;
         const history=[];
         for(const obs of rows){
-          while(eventIndex+1<milestones.length&&milestones[eventIndex+1].at<=obs.at)
+          while(eventIndex+1<crossings.length&&crossings[eventIndex+1].at<=obs.at)
             eventIndex++;
-          const before=milestones[eventIndex];
-          const after=milestones[eventIndex+1];
-          let progress=obs.progress;
+          const before=crossings[eventIndex];
+          const after=crossings[eventIndex+1];
+          let progress=null;
           if(before&&after&&after.at>before.at){
             const fraction=Math.max(0,Math.min(1,(obs.at-before.at)/(after.at-before.at)));
             progress=before.progress+(after.progress-before.progress)*fraction;
           }else if(before){
-            // An unfinished lap must keep advancing between sector events.
-            // The previous cap at obs.progress froze X, so every passing
-            // second added to the gap and created vertical cliffs.
-            const previousLap=milestones[eventIndex-1];
-            const measuredPace=previousLap&&before.at>previousLap.at
-              ?(before.at-previousLap.at)/(before.progress-previousLap.progress)
-              :averagePace;
-            const pace=measuredPace>averagePace*.6&&measuredPace<averagePace*2
-              ?measuredPace:averagePace;
-            const elapsed=Math.max(0,obs.at-before.at)/Math.max(1,pace);
-            // Only extrapolate one unfinished lap without a new lap crossing.
-            progress=before.progress+Math.min(.999,elapsed);
+            const prior=crossings[eventIndex-1];
+            const speed=prior&&before.at>prior.at
+              ?(before.progress-prior.progress)/(before.at-prior.at)
+              :1/Math.max(1,averagePace);
+            // Limit the live tail to one sector without a further timing
+            // crossing; a stopped or retired car must not circulate forever.
+            const maxAdvance=sectorFractions.reduce((a,b)=>Math.max(a,b),0);
+            progress=before.progress+Math.min(maxAdvance,Math.max(0,obs.at-before.at)*Math.max(0,speed));
+          }else if(after){
+            progress=after.progress-Math.max(0,after.at-obs.at)/Math.max(1,averagePace);
           }
           const gapText=String(obs.row.gap??"").trim();
-          const leaderMarker=/^LAP\s+\d+$/i.test(gapText);
-          const lapDeficit=gapText.match(/^\+?\s*(\d+)\s+L(?:AP(?:S)?)?$/i);
-          let gap=leaderMarker?0:this.seconds(gapText);
-          if(gap!==null){
-            anchor={at:obs.at,progress,gap};
-          }else if(anchor&&(lapDeficit||!gapText)){
-            // Derive elapsed gap from the driver's sector progress relative
-            // to the race clock. Retain the last measured gap as an anchor.
-            gap=Math.max(0,anchor.gap+(obs.at-anchor.at)-(progress-anchor.progress)*averagePace);
-          }else if(lapDeficit){
+          const leaderMarker=/^LAP\\s+\\d+$/i.test(gapText);
+          const lapDeficit=gapText.match(/^\\+?\\s*(\\d+)\\s+L(?:AP(?:S)?)?$/i);
+          const measuredGap=leaderMarker?0:this.seconds(gapText);
+          let gap=measuredGap;
+          if(measuredGap!==null){
+            // Measured gaps are authoritative. Re-anchor the independent
+            // sector timeline only when the feed actually reports seconds.
+            if(Number.isFinite(progress))anchor={at:obs.at,progress,gap:measuredGap};
+          }else if(anchor&&Number.isFinite(progress)&&(lapDeficit||!gapText)){
+            gap=Math.max(0,anchor.gap+(obs.at-anchor.at)
+              -(progress-anchor.progress)*averagePace);
+          }else if(lapDeficit&&!anchor){
             gap=Number(lapDeficit[1])*averagePace;
-            anchor={at:obs.at,progress,gap};
+            if(Number.isFinite(progress))anchor={at:obs.at,progress,gap};
           }
           if(gap===null)continue;
           const previous=history.at(-1);
