@@ -552,11 +552,18 @@ class F1RaceTrace extends HTMLElement {
             const fraction=Math.max(0,Math.min(1,(obs.at-before.at)/(after.at-before.at)));
             progress=before.progress+(after.progress-before.progress)*fraction;
           }else if(before){
-            // No next lap crossing yet: use the latest sector checkpoint
-            // to bound forward progress, without retroactively reshaping
-            // the already completed historical laps.
-            const elapsed=Math.max(0,obs.at-before.at)/Math.max(1,averagePace);
-            progress=Math.max(before.progress,Math.min(Math.max(before.progress,obs.progress),before.progress+elapsed));
+            // An unfinished lap must keep advancing between sector events.
+            // The previous cap at obs.progress froze X, so every passing
+            // second added to the gap and created vertical cliffs.
+            const previousLap=milestones[eventIndex-1];
+            const measuredPace=previousLap&&before.at>previousLap.at
+              ?(before.at-previousLap.at)/(before.progress-previousLap.progress)
+              :averagePace;
+            const pace=measuredPace>averagePace*.6&&measuredPace<averagePace*2
+              ?measuredPace:averagePace;
+            const elapsed=Math.max(0,obs.at-before.at)/Math.max(1,pace);
+            // Only extrapolate one unfinished lap without a new lap crossing.
+            progress=before.progress+Math.min(.999,elapsed);
           }
           const gapText=String(obs.row.gap??"").trim();
           const leaderMarker=/^LAP\s+\d+$/i.test(gapText);
