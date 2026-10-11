@@ -382,17 +382,19 @@ class F1RaceTrace extends HTMLElement {
       const leaderId=String(leaderLive?.racing_number||leaderLive?.tla||"");
       const leaderRaw=rawById.get(leaderId);
       const leaderGap=leaderRaw?0:null;
-      // Integrate the leader's pace on one continuous baseline. The lap
-      // deviation is applied only when the lap counter changes.
-      if(!this.gapBaseline)this.gapBaseline={lap,value:0};
-      if(lap<this.gapBaseline.lap)this.gapBaseline={lap,value:0};
-      if(lap>this.gapBaseline.lap){
-        for(let n=this.gapBaseline.lap;n<lap;n++){
-          const t=leaderTimes.get(n);
-          if(t!==undefined)this.gapBaseline.value+=averagePace-t;
-        }
-        this.gapBaseline.lap=lap;
+      // Shared continuous baseline, interpolated through each lap.
+      const baseline=new Map([[0,0]]);
+      let cumulative=0;
+      for(let n=1;n<=lap;n++){
+        cumulative+=averagePace-(leaderTimes.get(n)??averagePace);
+        baseline.set(n,cumulative);
       }
+      const baselineAt=x=>{
+        const n=Math.max(0,Math.min(lap,Math.floor(x)));
+        const fraction=Math.max(0,Math.min(1,x-n));
+        const start=baseline.get(n)??cumulative;
+        return start+fraction*((baseline.get(n+1)??start)-start);
+      };
       // Recorded observations are the canonical history. Rebuild them on
       // every fetch, including when the card has already drawn a live trace.
       const saved=this.persistedRecording?.samples||[];
@@ -439,51 +441,34 @@ class F1RaceTrace extends HTMLElement {
           }
         }
       }
+      // Rebuild both history and live points against the SAME baseline.
       for(const d of traces){
         const observations=byId.get(d.id)||[];
-        if(!observations.length)continue;
-        const first=observations[0];
-        const anchor=d.points.filter(p=>p.lap<=first.lap).at(-1);
-        const baselineAt=n=>-(leaderDeviation.get(Math.floor(n))??0);
-        const existing=this.gapTraceHistory.get(d.id);
-        const offset=existing?.offset??(anchor?anchor.y-(baselineAt(first.lap)-first.gap):0);
         const restored=[];
         for(const observation of observations){
           const x=observation.lap;
-          const y=baselineAt(x)-observation.gap+offset;
+          const y=baselineAt(x)-observation.gap;
           const last=restored.at(-1);
           if(last&&Math.abs(last.lap-x)<.00001)restored[restored.length-1]={lap:x,y,estimated:true};
           else if(!last||x>last.lap)restored.push({lap:x,y,estimated:true});
         }
-        const seed=d.points.filter(p=>p.lap<first.lap-.001);
-        // Retain any genuinely newer live samples until the recorder catches up.
-        const liveTail=(existing?.points||[]).filter(p=>p.lap>(restored.at(-1)?.lap??-Infinity)+.0001);
-        this.gapTraceHistory.set(d.id,{points:[...seed,...restored,...liveTail],offset,lastGap:observations.at(-1).gap});
-      }
-      for(const d of traces){
         const raw=rawById.get(d.id);
-        const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(String(raw?.gap_to_leader??"").trim());
+        const isLeader=d.id===leaderId||/^LAP\\s+\\d+$/i.test(String(raw?.gap_to_leader??"").trim());
         const gap=isLeader?0:this.seconds(raw?.gap_to_leader);
-        let state=this.gapTraceHistory.get(d.id);
-        if(!state){
-          // Historical reconstruction is only a starting approximation;
-          // don't splice it onto a live stream at every new lap.
-          const seed=d.points.filter(p=>Number.isFinite(p.y)&&p.lap<liveX-.005).map(p=>({...p}));
-          const last=seed.at(-1);
-          const origin=this.gapBaseline.value-(gap??0);
-          state={points:seed,offset:last?last.y-origin:0,lastGap:gap};
-          this.gapTraceHistory.set(d.id,state);
-        }
+        const lastRecordedX=restored.at(-1)?.lap??-Infinity;
+        const existing=this.gapTraceHistory.get(d.id);
+        const liveTail=(existing?.points||[]).filter(p=>p.live&&p.lap>lastRecordedX+.0001)
+          .map(p=>({...p,y:baselineAt(p.lap)-p.gap}));
+        const points=[...restored,...liveTail];
         if(gap!==null){
-          const last=state.points.at(-1);
-          const target=this.gapBaseline.value-gap+state.offset;
-          if(!last||liveX>last.lap+.0001){
-            state.points.push({lap:liveX,y:target,estimated:true});
-            if(state.points.length>3000)state.points.splice(0,state.points.length-3000);
-          }
-          state.lastGap=gap;
+          const latest=points.at(-1)?.lap??-Infinity;
+          const x=Math.max(liveX,latest);
+          if(x>latest+.0001)points.push({lap:x,y:baselineAt(x)-gap,gap,live:true,estimated:true});
+          else if(points.length&&points.at(-1).live)
+            points[points.length-1]={lap:x,y:baselineAt(x)-gap,gap,live:true,estimated:true};
         }
-        d.points=state.points.filter(p=>p.lap<=lap);
+        this.gapTraceHistory.set(d.id,{points,lastGap:gap});
+        d.points=points.filter(p=>p.lap<=lap);
       }
     }
     if(this.config.debug){
