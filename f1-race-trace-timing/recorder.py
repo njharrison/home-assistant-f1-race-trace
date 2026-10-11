@@ -37,7 +37,7 @@ def record(options):
         return
     driver_entity = options.get("driver_entity", "sensor.f1_drivers_driver_positions")
     lap_entity = options.get("lap_entity", "sensor.f1_race_lap_count")
-    race_control_entity = options.get("race_control_entity", "sensor.f1_race_control")
+    race_control_entity = options.get("race_control_entity", "sensor.f1_officials_race_control")
     session = requests.Session()
     session.headers.update({"Authorization": "Bearer " + TOKEN})
     recording = {"schema_version": 1, "source": "F1 Sensor", "run": 1, "samples": [], "race_control": []}
