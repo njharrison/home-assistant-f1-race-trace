@@ -483,7 +483,18 @@ class F1RaceTrace extends HTMLElement {
             value+=averagePace-(t1-t0);
         }
         const t0=startByLap.get(whole+1),t1=startByLap.get(whole+2);
-        const duration=t0!==undefined&&t1!==undefined&&t1>t0?t1-t0:averagePace;
+        // The current lap has no end timestamp yet. Carry forward the
+        // previous completed leader/race-clock lap's pace if plausible,
+        // rather than defaulting to average pace (a horizontal leader).
+        let duration=t0!==undefined&&t1!==undefined&&t1>t0?t1-t0:null;
+        if(duration===null){
+          const priorStart=startByLap.get(whole);
+          const priorEnd=startByLap.get(whole+1);
+          const prior=priorStart!==undefined&&priorEnd!==undefined?priorEnd-priorStart:null;
+          // Exclude pit/SC anomalies and implausibly short replay intervals.
+          duration=prior!==null&&prior>averagePace*.8&&prior<averagePace*1.2
+            ?prior:averagePace;
+        }
         return value+fraction*(averagePace-duration);
       };
       // Position the observation by its driver's own sector progress before
