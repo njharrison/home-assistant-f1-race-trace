@@ -291,7 +291,7 @@ class F1RaceTrace extends HTMLElement {
     const sample=sortedTimes.slice(start,end);
     const estimatedPace=sample.length?sample.reduce((a,b)=>a+b,0)/sample.length:95;
     if(this.fixedPace===null&&sample.length>=8)this.fixedPace=estimatedPace;
-    const averagePace=this.fixedPace??estimatedPace;
+    let averagePace=this.fixedPace??estimatedPace;
     // Live gap-to-leader is only a relative offset. Add the leader's
     // cumulative pace deviation to give every car a common average baseline.
     // Only use consecutive known laps; missing laps cannot be invented.
@@ -511,6 +511,47 @@ class F1RaceTrace extends HTMLElement {
         if(startByLap.has(n+1)){
           const duration=startByLap.get(n+1)-startByLap.get(n);
           if(duration>0)durations.push(duration);
+        }
+      }
+      // Estimate the normal reference only from complete, green-flag
+      // race-clock laps. Exclude the lap before/after a neutralisation
+      // as well as every lap overlapping it. Never remove their actual
+      // elapsed time from the plotted leader deviation.
+      const recordedStatus=this.persistedRecording?.samples||[];
+      const neutralAt=t=>{
+        const v=String(t?.track_status||"").toUpperCase();
+        return /^(VSC|SC|SAFETY CAR|VIRTUAL SAFETY CAR|RED|RED FLAG)$/.test(v);
+      };
+      const excludedLaps=new Set();
+      let previousStatus=null;
+      for(const sample of recordedStatus){
+        const n=Number(sample.lap),status=String(sample.track_status||"").toUpperCase();
+        if(!Number.isInteger(n)||!status)continue;
+        if(neutralAt(sample))excludedLaps.add(n);
+        if(previousStatus&&previousStatus.status!==status
+          &&(previousStatus.neutral||neutralAt(sample))){
+          // The transition and immediate restart affect both sides.
+          for(const k of [previousStatus.lap-1,previousStatus.lap,
+            n-1,n,n+1])excludedLaps.add(k);
+        }
+        previousStatus={lap:n,status,neutral:neutralAt(sample)};
+      }
+      const greenDurations=[];
+      for(const n of lapsSorted){
+        const t0=startByLap.get(n),t1=startByLap.get(n+1);
+        if(n<2||excludedLaps.has(n)||excludedLaps.has(n+1)
+          ||t0===undefined||t1===undefined||t1<=t0)continue;
+        greenDurations.push(t1-t0);
+      }
+      if(greenDurations.length>=3){
+        greenDurations.sort((a,b)=>a-b);
+        const mid=greenDurations.slice(Math.floor(greenDurations.length*.15),
+          Math.max(Math.floor(greenDurations.length*.15)+1,
+            Math.ceil(greenDurations.length*.8)));
+        const greenPace=mid.reduce((a,b)=>a+b,0)/mid.length;
+        if(greenPace>30&&greenPace<240){
+          averagePace=greenPace;
+          this.fixedPace=greenPace;
         }
       }
       durations.sort((a,b)=>a-b);
@@ -825,6 +866,23 @@ class F1RaceTrace extends HTMLElement {
         :prior!==undefined&&t0>prior?t0-prior:averagePace;
       return Math.max(1,n-1+Math.max(0,(time-t0)/Math.max(1,duration)));
     };
+    // Prefer the recorder's actual track-status transitions over FIA
+    // message history, which can contain delayed or repeated notices.
+    const statusSamples=recordedSamples.filter(s=>s.track_status);
+    const statusPeriods=[];
+    let statusCaution=null;
+    for(const sample of statusSamples){
+      const status=String(sample.track_status).toUpperCase();
+      const type=/^(VSC|VIRTUAL SAFETY CAR)$/.test(status)?"VSC"
+        :/^(SC|SAFETY CAR)$/.test(status)?"SC":null;
+      const at=Number(sample.timestamp);
+      if(!Number.isFinite(at))continue;
+      if(type!==statusCaution?.type){
+        if(statusCaution)statusPeriods.push({...statusCaution,end:at});
+        statusCaution=type?{start:at,type}:null;
+      }
+    }
+    if(statusCaution)statusPeriods.push({...statusCaution,active:true});
     const controlPeriods=[];
     let caution=null;
     for(const event of controlEvents){
@@ -866,7 +924,8 @@ class F1RaceTrace extends HTMLElement {
       const raceX=raceXAt(time);
       return raceX===null?NaN:x(raceX+ySeconds/averagePace);
     };
-    const cautionBands=controlAnchors.length?controlPeriods.map(p=>{
+    const displayPeriods=statusSamples.length?statusPeriods:controlPeriods;
+    const cautionBands=controlAnchors.length?displayPeriods.map(p=>{
       if(!(p.end>p.start)&&!p.active)return "";
       const color=p.type==="VSC"?"#e5b84b":"#f5a15b";
       const top=high,bottom=low;
