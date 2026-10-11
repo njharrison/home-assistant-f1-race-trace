@@ -93,3 +93,20 @@ New events are recorded from then onward; earlier replay history cannot be
 recovered from the existing driver-only recording. Replay rewind resets the
 event list. Nicxe's sensor only exposes its latest five messages, so the
 recorder should remain running to avoid missing older events.
+
+## Incremental recording downloads (add-on v0.3.5)
+
+The recorder continues writing the complete `live-recording.json` archive.
+It additionally publishes `live-recording-delta.json` with a rolling
+90-second window of samples and FIA race-control events, plus their absolute
+array offsets. The card downloads the full archive on first load, then
+polls the much smaller delta every five seconds. If the delta is missing,
+stale, belongs to another replay run, or no longer covers the samples the
+browser missed, the card automatically reloads the full archive. The
+existing full archive format remains compatible.
+
+Upgrade/rebuild/restart the timing add-on to **v0.3.5** and refresh the
+Lovelace card's JS resource. A custom `recording_url` automatically maps
+`name.json` to `name-delta.json`; use `recording_delta_url` to override.
+This reduces network transfer and JSON parsing; complete trace reconstruction
+is still performed when new data arrives.
