@@ -583,7 +583,15 @@ class F1RaceTrace extends HTMLElement {
         const rows=byLap.get(n);
         const first=startByLap.get(n),next=startByLap.get(n+1);
         const duration=next!==undefined&&next>first?next-first:replayLapDuration;
-        for(const sample of rows){
+        for(let sampleIndex=0;sampleIndex<rows.length;sampleIndex++){
+          const sample=rows[sampleIndex];
+          // The first snapshot after a lap-count transition can still
+          // contain the previous lap's timing state. Keep its timestamp
+          // as the lap-clock boundary, but don't plot that mixed-state
+          // snapshot when a confirmed follow-up arrives immediately.
+          if(n>1&&sampleIndex===0&&rows.length>1
+            &&Number(rows[1].timestamp)-Number(sample.timestamp)<=3)
+            continue;
           const at=Number(sample.timestamp);
           const elapsed=Math.max(0,at-first);
           const raceX=Math.max(1,n-1+Math.min(.999,elapsed/Math.max(1,duration)));
