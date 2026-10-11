@@ -835,13 +835,20 @@ class F1RaceTrace extends HTMLElement {
       if(!Number.isFinite(at))continue;
       const vscStart=/VIRTUAL SAFETY CAR DEPLOYED|VSC DEPLOYED/.test(message);
       const scStart=!vscStart&&/SAFETY CAR DEPLOYED/.test(message);
-      const vscEnd=/VSC ENDING|VIRTUAL SAFETY CAR ENDING|VSC ENDED/.test(message);
-      const scEnd=/SAFETY CAR IN THIS LAP|SAFETY CAR ENDING/.test(message);
-      const green=/GREEN FLAG|TRACK CLEAR/.test(message)||flag==="GREEN"&&["TRACK","SAFETYCAR","VSC"].includes(category);
+      // "VSC ENDING" and "SAFETY CAR IN THIS LAP" are advance
+      // notices, not the resumption of racing. Only an explicit
+      // track-wide green/clear message closes a neutralisation.
+      // Individual sector green flags must not close it.
+      const green=/GREEN FLAG|TRACK CLEAR/.test(message)
+        &&(!category||["TRACK","SAFETYCAR","VSC","OTHER"].includes(category));
       if(vscStart||scStart){
-        if(caution)controlPeriods.push({...caution,end:at});
-        caution={start:at,type:vscStart?"VSC":"SC"};
-      }else if(caution&&(green||(caution.type==="VSC"&&vscEnd)||(caution.type==="SC"&&scEnd))){
+        const type=vscStart?"VSC":"SC";
+        // Repeated deployment messages do not create a new period.
+        if(caution?.type!==type){
+          if(caution)controlPeriods.push({...caution,end:at});
+          caution={start:at,type};
+        }
+      }else if(caution&&green){
         controlPeriods.push({...caution,end:at});
         caution=null;
       }
