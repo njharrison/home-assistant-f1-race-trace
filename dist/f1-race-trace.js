@@ -393,60 +393,56 @@ class F1RaceTrace extends HTMLElement {
         }
         this.gapBaseline.lap=lap;
       }
-      // Restore only observations whose lap has actually been reached.
-      // Never infer the end of a lap from a driver's completed_laps or
-      // sector state: those can lead the race-wide lap counter in replay.
+      // Recorded observations are the canonical history. Rebuild them on
+      // every fetch, including when the card has already drawn a live trace.
       const saved=this.persistedRecording?.samples||[];
-      if(saved.length){
-        const byLap=new Map();
-        for(const sample of saved){
-          const n=Number(sample.lap);
-          if(!Number.isInteger(n)||n<1||n>lap)continue;
-          if(!byLap.has(n))byLap.set(n,[]);
-          byLap.get(n).push(sample);
-        }
-        const byId=new Map();
-        for(const [n,samples] of byLap){
-          const first=Number(samples[0].timestamp);
-          const last=Number(samples.at(-1).timestamp);
-          // Closed laps may use the entire recorded interval. For the
-          // current lap, progress is relative to the clock observed so far.
-          // In either case never manufacture the next lap boundary.
-          const duration=Math.max(1,last-first);
-          for(const sample of samples){
-            const elapsed=Math.max(0,Number(sample.timestamp)-first);
-            const fraction=Math.min(n===lap?.98:.999,elapsed/Math.max(duration,averagePace));
-            const x=Math.max(1,n-1+fraction);
-            for(const row of sample.drivers||[]){
-              const id=String(row.id);
-              const gap=/^LAP\s+\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
-              if(gap===null)continue;
-              if(!byId.has(id))byId.set(id,[]);
-              byId.get(id).push({lap:x,gap,at:sample.timestamp});
-            }
+      const byLap=new Map();
+      for(const sample of saved){
+        const n=Number(sample.lap);
+        if(!Number.isInteger(n)||n<1||n>lap)continue;
+        if(!byLap.has(n))byLap.set(n,[]);
+        byLap.get(n).push(sample);
+      }
+      const byId=new Map();
+      for(const [n,rows] of byLap){
+        rows.sort((a,b)=>Number(a.timestamp)-Number(b.timestamp));
+        const first=Number(rows[0].timestamp);
+        const last=Number(rows.at(-1).timestamp);
+        // For completed laps use their observed duration. For the current
+        // lap use reference pace so new samples progress left-to-right.
+        const duration=n<lap?Math.max(1,last-first):Math.max(1,averagePace);
+        for(const sample of rows){
+          const elapsed=Math.max(0,Number(sample.timestamp)-first);
+          const x=Math.max(1,n-1+Math.min(n<lap?.999:.98,elapsed/duration));
+          for(const row of sample.drivers||[]){
+            const id=String(row.id);
+            const gap=/^LAP\s+\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
+            if(gap===null)continue;
+            if(!byId.has(id))byId.set(id,[]);
+            byId.get(id).push({lap:x,gap,at:sample.timestamp});
           }
         }
-        for(const d of traces){
-          if(this.gapTraceHistory.has(d.id))continue;
-          const observations=byId.get(d.id)||[];
-          if(!observations.length)continue;
-          const first=observations[0];
-          const anchor=d.points.filter(p=>p.lap<=first.lap).at(-1);
-          const baselineAt=n=>-(leaderDeviation.get(Math.floor(n))??0);
-          const offset=anchor?anchor.y-(baselineAt(first.lap)-first.gap):0;
-          const restored=[];
-          let previousX=-Infinity;
-          for(const observation of observations){
-            const x=observation.lap;
-            if(x<previousX)continue;
-            const y=baselineAt(x)-observation.gap+offset;
-            if(x===previousX)restored[restored.length-1]={lap:x,y,estimated:true};
-            else restored.push({lap:x,y,estimated:true});
-            previousX=x;
-          }
-          const seed=d.points.filter(p=>p.lap<first.lap-.001);
-          this.gapTraceHistory.set(d.id,{points:[...seed,...restored],offset,lastGap:observations.at(-1).gap});
+      }
+      for(const d of traces){
+        const observations=byId.get(d.id)||[];
+        if(!observations.length)continue;
+        const first=observations[0];
+        const anchor=d.points.filter(p=>p.lap<=first.lap).at(-1);
+        const baselineAt=n=>-(leaderDeviation.get(Math.floor(n))??0);
+        const existing=this.gapTraceHistory.get(d.id);
+        const offset=existing?.offset??(anchor?anchor.y-(baselineAt(first.lap)-first.gap):0);
+        const restored=[];
+        for(const observation of observations){
+          const x=observation.lap;
+          const y=baselineAt(x)-observation.gap+offset;
+          const last=restored.at(-1);
+          if(last&&Math.abs(last.lap-x)<.00001)restored[restored.length-1]={lap:x,y,estimated:true};
+          else if(!last||x>last.lap)restored.push({lap:x,y,estimated:true});
         }
+        const seed=d.points.filter(p=>p.lap<first.lap-.001);
+        // Retain any genuinely newer live samples until the recorder catches up.
+        const liveTail=(existing?.points||[]).filter(p=>p.lap>(restored.at(-1)?.lap??-Infinity)+.0001);
+        this.gapTraceHistory.set(d.id,{points:[...seed,...restored,...liveTail],offset,lastGap:observations.at(-1).gap});
       }
       for(const d of traces){
         const raw=rawById.get(d.id);
