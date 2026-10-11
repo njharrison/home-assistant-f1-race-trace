@@ -31,7 +31,7 @@ class F1RaceTrace extends HTMLElement {
     this.yWindow = null;
   }
   connectedCallback(){
-    if(!this.recordingTimer)this.recordingTimer=setInterval(()=>this.loadRecording(),5000);
+    if(!this.recordingTimer)this.recordingTimer=setInterval(()=>this.loadRecording(),1000);
   }
   disconnectedCallback(){
     if(this.recordingTimer)clearInterval(this.recordingTimer);
@@ -67,7 +67,7 @@ class F1RaceTrace extends HTMLElement {
   async loadRecording(){
     if(this.config.recording_url===false||this.config.timing_engine==="legacy")return;
     const now=Date.now();
-    if(this.recordingLoading||now-this.recordingFetchAt<4500)return;
+    if(this.recordingLoading||now-this.recordingFetchAt<900)return;
     this.recordingFetchAt=now;
     this.recordingLoading=true;
     try{
