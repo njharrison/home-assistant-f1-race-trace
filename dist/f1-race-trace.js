@@ -814,8 +814,8 @@ class F1RaceTrace extends HTMLElement {
       const message=String(event.message||"").toUpperCase();
       const category=String(event.category||"").toUpperCase();
       const flag=String(event.flag||"").toUpperCase();
-      const at=raceXAt(Number(event.observed_at));
-      if(at===null)continue;
+      const at=Number(event.observed_at);
+      if(!Number.isFinite(at))continue;
       const vscStart=/VIRTUAL SAFETY CAR DEPLOYED|VSC DEPLOYED/.test(message);
       const scStart=!vscStart&&/SAFETY CAR DEPLOYED/.test(message);
       const vscEnd=/VSC ENDING|VIRTUAL SAFETY CAR ENDING|VSC ENDED/.test(message);
@@ -829,13 +829,32 @@ class F1RaceTrace extends HTMLElement {
         caution=null;
       }
     }
-    if(caution)controlPeriods.push({...caution,end:lap});
-    const cautionBands=controlPeriods.map(p=>{
-      const x0=Math.max(L,x(p.start)),x1=Math.min(W-R,x(p.end));
-      if(x1<=x0)return "";
+    if(caution){
+      const latest=Number(recordedSamples.at(-1)?.timestamp);
+      if(Number.isFinite(latest)&&latest>=caution.start)
+        controlPeriods.push({...caution,end:latest});
+    }
+    // Isochrones in the race trace satisfy x*referencePace - y = constant.
+    // Consequently an event occurring at one instant is a diagonal line,
+    // not a vertical lap boundary. The recorder's first observation anchors
+    // wall-clock time to reference-lap coordinate x=1, y=0.
+    const timeOrigin=Number(recordedSamples[0]?.timestamp);
+    const timeBoundaryX=(time,ySeconds)=>
+      x(1+(time-timeOrigin+ySeconds)/averagePace);
+    const cautionBands=Number.isFinite(timeOrigin)?controlPeriods.map(p=>{
+      if(!(p.end>p.start))return "";
       const color=p.type==="VSC"?"#e5b84b":"#f5a15b";
-      return `<rect x="${x0}" y="${T}" width="${x1-x0}" height="${H-T-B}" fill="${color}" opacity=".10"/><line x1="${x0}" y1="${T}" x2="${x0}" y2="${H-B}" stroke="${color}" stroke-width="2" stroke-dasharray="6 5"/><text x="${x0+5}" y="${T+18}" fill="${color}" font-size="13" font-weight="700">${p.type}</text>`;
-    }).join("");
+      const top=high,bottom=low;
+      const xStartTop=timeBoundaryX(p.start,top);
+      const xStartBottom=timeBoundaryX(p.start,bottom);
+      const xEndTop=timeBoundaryX(p.end,top);
+      const xEndBottom=timeBoundaryX(p.end,bottom);
+      const polygon=[xStartTop+","+y(top),xEndTop+","+y(top),
+        xEndBottom+","+y(bottom),xStartBottom+","+y(bottom)].join(" ");
+      return `<polygon points="${polygon}" fill="${color}" opacity=".10"/>
+        <line x1="${xStartTop}" y1="${y(top)}" x2="${xStartBottom}" y2="${y(bottom)}" stroke="${color}" stroke-width="2" stroke-dasharray="6 5"/>
+        <text x="${Math.max(L+5,Math.min(W-R-35,xStartTop+5))}" y="${T+18}" fill="${color}" font-size="13" font-weight="700">${p.type}</text>`;
+    }).join(""):"";
     const lines=traces.filter(d=>d.points.length>0).map(d=>{
       // The dotted copy represents the same car one reference lap ahead:
       // shift BOTH its circuit position (X) and its time offset (Y).
