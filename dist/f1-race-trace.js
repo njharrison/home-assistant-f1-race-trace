@@ -582,6 +582,9 @@ class F1RaceTrace extends HTMLElement {
           const gapText=String(obs.row.gap??"").trim();
           const leaderMarker=/^LAP\s+\d+$/i.test(gapText);
           const lapDeficit=gapText.match(/^\+?\s*(\d+)\s+L(?:AP(?:S)?)?$/i);
+          // The leader marker is "LAP N", but the recording may also
+          // contain a numeric zero gap. Both are authoritative and must
+          // bypass the sector fallback entirely.
           const measuredGap=leaderMarker?0:this.seconds(gapText);
           let gap=measuredGap;
           if(measuredGap!==null){
@@ -597,7 +600,10 @@ class F1RaceTrace extends HTMLElement {
           }
           if(gap===null)continue;
           const previous=history.at(-1);
-          const driverX=advanceX(previous,plottedX(obs.raceX,gap));
+          // Keep the leader on the race-clock X axis. If a stale or
+          // temporarily absent leader marker arrives, the fallback must
+          // not shift their whole trace a lap behind.
+          const driverX=advanceX(previous,leaderMarker?obs.raceX:plottedX(obs.raceX,gap));
           history.push({lap:driverX,raceLap:obs.raceX,gap,at:obs.at});
         }
         byId.set(id,history);
