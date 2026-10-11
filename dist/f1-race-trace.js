@@ -442,6 +442,22 @@ class F1RaceTrace extends HTMLElement {
         const duration=t0!==undefined&&t1!==undefined&&t1>t0?t1-t0:averagePace;
         return value+fraction*(averagePace-duration);
       };
+      // Position the observation by its driver's own sector progress before
+      // subtracting its gap expressed as a fraction of a reference lap.
+      const sectorFloor=raw=>{
+        const state=String(raw?.sector_state??"").toLowerCase();
+        const current=Number(raw?.sector_current_lap);
+        const completed=Number(raw?.completed_laps);
+        if(state==="lap_complete"||state==="s3_done")return 0;
+        if(state==="s2_done"||state==="s3_running")return 2/3;
+        if(state==="s1_done"||state==="s2_running")return 1/3;
+        if(Number.isFinite(current)&&Number.isFinite(completed)&&current>completed){
+          if(raw?.sector_2!=null&&Number(raw?.sector_2_lap)===current)return 2/3;
+          if(raw?.sector_1!=null&&Number(raw?.sector_1_lap)===current)return 1/3;
+        }
+        return 0;
+      };
+      const plottedX=(raceX,gap,raw)=>Math.max(0,raceX-Math.max(0,gap)/averagePace,Math.floor(raceX)+sectorFloor(raw)-Math.max(0,gap)/averagePace);
       for(const n of lapsSorted){
         const rows=byLap.get(n);
         const first=startByLap.get(n);
@@ -456,7 +472,7 @@ class F1RaceTrace extends HTMLElement {
             const gap=/^LAP\s+\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
             if(gap===null)continue;
             if(!byId.has(id))byId.set(id,[]);
-            byId.get(id).push({lap:x,gap,at:sample.timestamp});
+            byId.get(id).push({lap:plottedX(x,gap,row),raceLap:x,gap,at:sample.timestamp});
           }
         }
       }
@@ -475,19 +491,10 @@ class F1RaceTrace extends HTMLElement {
         const restored=[];
         for(const observation of observations){
           const x=observation.lap;
-          const y=baselineAt(x)-observation.gap;
-          const last=restored.at(-1);
-          // A sudden, sustained loss of roughly a pit-stop duration is a
-          // real event, not a timing discontinuity to hide. Keep its drop.
-          const previousObservation=restored.length?observations[observations.indexOf(observation)-1]:null;
-          const loss=previousObservation?observation.gap-previousObservation.gap:0;
-          const elapsed=previousObservation?observation.at-previousObservation.at:Infinity;
-          // A pit loss may be delivered as one jump or spread across several
-          // successive samples. Mark the steep, short-interval sections.
-          const pitDrop=elapsed>0&&elapsed<=6&&loss>=3;
-          const point={lap:x,y,estimated:true,pitDrop};
-          if(last&&Math.abs(last.lap-x)<.00001)restored[restored.length-1]=point;
-          else if(!last||x>last.lap)restored.push(point);
+          const y=baselineAt(observation.raceLap)-observation.gap;
+          // Retain identical X coordinates: they represent vertical timing
+          // movement (a stopped car, pit loss, or a timing correction).
+          restored.push({lap:x,y,estimated:true,gap:observation.gap,raceLap:observation.raceLap});
         }
         const raw=rawById.get(d.id);
         const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(String(raw?.gap_to_leader??"").trim());
@@ -495,19 +502,20 @@ class F1RaceTrace extends HTMLElement {
         const lastRecordedX=restored.at(-1)?.lap??-Infinity;
         const existing=this.gapTraceHistory.get(d.id);
         const liveTail=(existing?.points||[]).filter(p=>p.live&&p.lap>lastRecordedX+.0001)
-          .map(p=>({...p,y:baselineAt(p.lap)-p.gap}));
+          .map(p=>({...p,y:baselineAt(p.raceLap??p.lap)-p.gap}));
         const points=[...restored,...liveTail];
         // When recording is fresh, its per-second snapshots already contain
         // the current gap. Never overwrite those with an older HA sensor.
         if(gap!==null&&!recorderFresh){
           const latest=points.at(-1)?.lap??-Infinity;
-          const x=Math.max(recorderX??liveX,latest);
-          if(x>latest+.0001)points.push({lap:x,y:baselineAt(x)-gap,gap,live:true,estimated:true});
+          const raceX=recorderX??liveX;
+          const x=plottedX(raceX,gap,raw);
+          if(x>latest+.0001)points.push({lap:x,y:baselineAt(raceX)-gap,gap,raceLap:raceX,live:true,estimated:true});
           else if(points.length&&points.at(-1).live)
-            points[points.length-1]={lap:x,y:baselineAt(x)-gap,gap,live:true,estimated:true};
+            points[points.length-1]={lap:x,y:baselineAt(raceX)-gap,gap,raceLap:raceX,live:true,estimated:true};
         }
         this.gapTraceHistory.set(d.id,{points,lastGap:gap});
-        d.points=points.filter(p=>p.lap<=lap);
+        d.points=points.filter(p=>p.raceLap===undefined||p.raceLap<=lap);
       }
     }
     if(this.config.debug){
@@ -547,23 +555,15 @@ class F1RaceTrace extends HTMLElement {
     const tickStep=Math.max(1,Math.ceil((viewEnd-viewStart)/14));
     for(let n=Math.max(1,Math.ceil(viewStart/tickStep)*tickStep);n<=viewEnd;n+=tickStep)grid+=`<line x1="${x(n)}" y1="${T}" x2="${x(n)}" y2="${H-B}" stroke="#202b39"/><text x="${x(n)}" y="${H-20}" text-anchor="middle" fill="#93a4b9" font-size="17">${n}</text>`;
     const lines=traces.filter(d=>d.points.length>0).map(d=>{
-      // Split discontinuities rather than drawing artificial near-vertical
-      // connections between estimates and timing-line observations.
-      const segments=[];
-      let segment=[];
-      for(const p of d.points){
-        const prev=segment.at(-1);
-        if(prev&&!p.pitDrop&&(p.lap-prev.lap<0.025&&Math.abs(p.y-prev.y)>1.5)){
-          if(segment.length)segments.push(segment);
-          segment=[];
-        }
-        segment.push(p);
-      }
-      if(segment.length)segments.push(segment);
-      const paths=segments.map(points=>`<polyline points="${points.map(p=>`${x(p.lap).toFixed(1)},${y(p.y).toFixed(1)}`).join(" ")}" fill="none" stroke="${d.color}" stroke-width="3.2" ${d.retired?'stroke-dasharray="7 6"':''}/>`).join("");
-      const last=d.points.at(-1);
-      const pitDots=d.points.filter(p=>p.pit).map(p=>`<rect x="${x(p.lap)-5}" y="${y(p.y)-5}" width="10" height="10" fill="#0b121d" stroke="${d.color}" stroke-width="2"/>`).join("");
-      return `${paths}<circle cx="${x(last.lap)}" cy="${y(last.y)}" r="4" fill="${d.color}"/><text x="${Math.min(W-R+9,x(last.lap)+9)}" y="${y(last.y)+5}" fill="${d.color}" font-size="17" font-weight="700">${this.escape(d.label)}</text>${pitDots}`;
+      // Render the complete original path and a second, dotted path exactly
+      // one reference lap above it. Neither path is broken at steep drops.
+      const points=d.points;
+      const coords=offset=>points.map(p=>`${x(p.lap).toFixed(1)},${y(p.y+offset).toFixed(1)}`).join(" ");
+      const original=`<polyline points="${coords(0)}" fill="none" stroke="${d.color}" stroke-width="3.2" ${d.retired?'stroke-dasharray="7 6"':''}/>`;
+      const duplicate=`<polyline points="${coords(averagePace)}" fill="none" stroke="${d.color}" stroke-width="2.5" stroke-dasharray="5 7" opacity=".8"/>`;
+      const last=points.at(-1);
+      const pitDots=points.filter(p=>p.pit).map(p=>`<rect x="${x(p.lap)-5}" y="${y(p.y)-5}" width="10" height="10" fill="#0b121d" stroke="${d.color}" stroke-width="2"/>`).join("");
+      return `${duplicate}${original}<circle cx="${x(last.lap)}" cy="${y(last.y)}" r="4" fill="${d.color}"/><text x="${Math.min(W-R+9,x(last.lap)+9)}" y="${y(last.y)+5}" fill="${d.color}" font-size="17" font-weight="700">${this.escape(d.label)}</text>${pitDots}`;
     }).join("");
     const opts=[{id:"AVERAGE",label:"Average race pace"},{id:"LEADER",label:"Race leader"},...drivers.map(d=>({id:d.id,label:d.label}))];
     this.shadowRoot.innerHTML=`<style>
