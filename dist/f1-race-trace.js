@@ -367,98 +367,89 @@ class F1RaceTrace extends HTMLElement {
         d.points=[...unique.values()].sort((a,b)=>a.lap-b.lap);
       }
     }
-    // v0.3: freeze one gap-based sample stream per driver. A completed lap
-    // changes the x-axis stage, not the y-axis origin.
+    // v0.4: One shared cumulative reference. Never re-anchor individual
+    // drivers: at a given race-clock instant, differences MUST equal gaps.
     if(useGapEngine){
       const now=Date.now();
-      if(!this.gapClock)this.gapClock={lap,start:now};
-      if(lap!==this.gapClock.lap){
-        // The race clock can advance more than one lap on a replay seek.
-        this.gapClock={lap,start:now};
-      }
-      const fraction=Math.min(.98,Math.max(0,(now-this.gapClock.start)/1000/Math.max(1,averagePace)));
-      const liveX=Math.max(1,lap-1+fraction);
       const rawById=new Map(liveDrivers.map(d=>[String(d.racing_number||d.tla),d]));
       const leaderId=String(leaderLive?.racing_number||leaderLive?.tla||"");
-      const leaderRaw=rawById.get(leaderId);
-      const leaderGap=leaderRaw?0:null;
-      // Integrate the leader's pace on one continuous baseline. The lap
-      // deviation is applied only when the lap counter changes.
-      if(!this.gapBaseline)this.gapBaseline={lap,value:0};
-      if(lap<this.gapBaseline.lap)this.gapBaseline={lap,value:0};
-      if(lap>this.gapBaseline.lap){
-        for(let n=this.gapBaseline.lap;n<lap;n++){
-          const t=leaderTimes.get(n);
-          if(t!==undefined)this.gapBaseline.value+=averagePace-t;
-        }
-        this.gapBaseline.lap=lap;
+      const gapOf=raw=>{
+        if(!raw)return null;
+        if(String(raw.racing_number||raw.tla)===leaderId||
+           /^LAP\\s+\\d+$/i.test(String(raw.gap_to_leader??raw.gap??"").trim()))return 0;
+        return this.seconds(raw.gap_to_leader??raw.gap);
+      };
+      // Cumulative reference-pace gain at each completed leader lap.
+      // A missing/deleted lap uses the fixed reference, never resets the sum.
+      const baseline=new Map([[0,0]]);
+      let cumulative=0;
+      for(let n=1;n<=lap;n++){
+        const t=leaderTimes.get(n);
+        cumulative+=t===undefined?0:averagePace-t;
+        baseline.set(n,cumulative);
       }
-      // Restore gap observations captured by the add-on while the card was closed.
-      // This is a single, race-wide sample clock, not per-driver lap timing.
+      const at=x=>{
+        const n=Math.max(0,Math.floor(x));
+        const f=Math.max(0,Math.min(1,x-n));
+        return (baseline.get(n)??cumulative)+f*((baseline.get(n+1)??baseline.get(n)??cumulative)-(baseline.get(n)??cumulative));
+      };
+      // Restore actual timestamp spacing inside each lap, rather than
+      // collapsing every sample in a sector to the same X coordinate.
       const saved=this.persistedRecording?.samples||[];
-      if(saved.length){
-        const byId=new Map();
-        for(const sample of saved){
-          const n=Number(sample.lap);
-          if(!Number.isFinite(n)||n<1||n>lap)continue;
-          for(const row of sample.drivers||[]){
-            const id=String(row.id);
-            const gap=/^LAP\\s+\\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
+      const restored=new Map();
+      const perLap=new Map();
+      for(const sample of saved){
+        const n=Number(sample.lap);
+        if(!Number.isInteger(n)||n<1||n>lap)continue;
+        if(!perLap.has(n))perLap.set(n,[]);
+        perLap.get(n).push(sample);
+      }
+      for(const [n,rows] of perLap){
+        const first=Number(rows[0].timestamp);
+        const last=Number(rows.at(-1).timestamp);
+        const span=Math.max(averagePace,last-first,1);
+        for(const sample of rows){
+          const x=Math.max(1,n-1+Math.min(.999,Math.max(0,(Number(sample.timestamp)-first)/span)));
+          for(const raw of sample.drivers||[]){
+            const id=String(raw.id);
+            const gap=gapOf({...raw,racing_number:id});
             if(gap===null)continue;
-            const completed=Number(row.completed_laps)||0;
-            const done=row.sector_state==="s2_done"?2:row.sector_state==="s1_done"?1:0;
-            const stage=Math.max(n-1,completed)+done/3;
-            const x=Math.min(lap,Math.max(1,stage));
-            if(!byId.has(id))byId.set(id,[]);
-            byId.get(id).push({lap:x,gap,at:sample.timestamp});
+            if(!restored.has(id))restored.set(id,[]);
+            restored.get(id).push({lap:x,y:at(x)-gap,estimated:true,gap});
           }
         }
-        for(const d of traces){
-          if(this.gapTraceHistory.has(d.id))continue;
-          const observations=byId.get(d.id)||[];
-          if(!observations.length)continue;
-          const first=observations[0];
-          const anchor=d.points.filter(p=>p.lap<=first.lap).at(-1);
-          const baselineAt=n=>-(leaderDeviation.get(Math.floor(n))??0);
-          const offset=anchor?anchor.y-(baselineAt(first.lap)-first.gap):0;
-          const restored=[];
-          let previousX=-Infinity;
-          for(const observation of observations){
-            const x=observation.lap;
-            if(x<previousX)continue;
-            const y=baselineAt(x)-observation.gap+offset;
-            if(x===previousX)restored[restored.length-1]={lap:x,y,estimated:true};
-            else restored.push({lap:x,y,estimated:true});
-            previousX=x;
-          }
-          const seed=d.points.filter(p=>p.lap<first.lap-.001);
-          this.gapTraceHistory.set(d.id,{points:[...seed,...restored],offset,lastGap:observations.at(-1).gap});
-        }
+      }
+      if(!this.gapClock||lap!==this.gapClock.lap)this.gapClock={lap,start:now};
+      const fraction=Math.min(.999,Math.max(0,(now-this.gapClock.start)/1000/Math.max(1,averagePace)));
+      const liveX=Math.max(1,lap-1+fraction);
+      // The live leader is always included, even without lap history.
+      if(leaderId&&!traces.some(d=>d.id===leaderId)){
+        const source=drivers.find(d=>d.id===leaderId);
+        if(source)traces.unshift({...source,points:[]});
       }
       for(const d of traces){
-        const raw=rawById.get(d.id);
-        const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(String(raw?.gap_to_leader??"").trim());
-        const gap=isLeader?0:this.seconds(raw?.gap_to_leader);
         let state=this.gapTraceHistory.get(d.id);
         if(!state){
-          // Historical reconstruction is only a starting approximation;
-          // don't splice it onto a live stream at every new lap.
-          const seed=d.points.filter(p=>Number.isFinite(p.y)&&p.lap<liveX-.005).map(p=>({...p}));
-          const last=seed.at(-1);
-          const origin=this.gapBaseline.value-(gap??0);
-          state={points:seed,offset:last?last.y-origin:0,lastGap:gap};
+          const history=restored.get(d.id)||[];
+          const seed=history.length?history:d.points.filter(p=>p.lap<liveX-.005).map(p=>({...p}));
+          state={points:seed,lastGap:null};
           this.gapTraceHistory.set(d.id,state);
+        }else{
+          // Recorder may have accumulated observations while this card was closed.
+          const history=restored.get(d.id)||[];
+          const last=state.points.at(-1)?.lap??-Infinity;
+          for(const p of history)if(p.lap>last+.0001)state.points.push(p);
         }
+        const gap=gapOf(rawById.get(d.id));
         if(gap!==null){
           const last=state.points.at(-1);
-          const target=this.gapBaseline.value-gap+state.offset;
-          if(!last||liveX>last.lap+.0001){
-            state.points.push({lap:liveX,y:target,estimated:true});
-            if(state.points.length>3000)state.points.splice(0,state.points.length-3000);
-          }
+          const target=at(liveX)-gap;
+          if(!last||liveX>last.lap+.0001)state.points.push({lap:liveX,y:target,estimated:true,gap});
+          else if(Math.abs(last.lap-liveX)<.0001)state.points[state.points.length-1]={lap:liveX,y:target,estimated:true,gap};
           state.lastGap=gap;
         }
-        d.points=state.points.filter(p=>p.lap<=lap);
+        if(state.points.length>5000)state.points.splice(0,state.points.length-5000);
+        d.points=state.points.filter(p=>p.lap<=lap).sort((a,b)=>a.lap-b.lap);
       }
     }
     if(this.config.debug){
