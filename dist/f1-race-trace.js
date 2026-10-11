@@ -587,12 +587,13 @@ class F1RaceTrace extends HTMLElement {
     const tickStep=Math.max(1,Math.ceil((viewEnd-viewStart)/14));
     for(let n=Math.max(1,Math.ceil(viewStart/tickStep)*tickStep);n<=viewEnd;n+=tickStep)grid+=`<line x1="${x(n)}" y1="${T}" x2="${x(n)}" y2="${H-B}" stroke="#202b39"/><text x="${x(n)}" y="${H-20}" text-anchor="middle" fill="#93a4b9" font-size="17">${n}</text>`;
     const lines=traces.filter(d=>d.points.length>0).map(d=>{
-      // Render the complete original path and a second, dotted path exactly
-      // one reference lap above it. Neither path is broken at steep drops.
+      // The dotted copy represents the same car one reference lap ahead:
+      // shift BOTH its circuit position (X) and its time offset (Y).
+      // Draw it independently, so no vertical wrap connector is introduced.
       const points=d.points;
-      const coords=offset=>points.map(p=>`${x(p.lap).toFixed(1)},${y(p.y+offset).toFixed(1)}`).join(" ");
-      const original=`<polyline points="${coords(0)}" fill="none" stroke="${d.color}" stroke-width="3.2" ${d.retired?'stroke-dasharray="7 6"':''}/>`;
-      const duplicate=`<polyline points="${coords(averagePace)}" fill="none" stroke="${d.color}" stroke-width="2.5" stroke-dasharray="5 7" opacity=".8"/>`;
+      const coords=(lapOffset,timeOffset)=>points.map(p=>`${x(p.lap+lapOffset).toFixed(1)},${y(p.y+timeOffset).toFixed(1)}`).join(" ");
+      const original=`<polyline points="${coords(0,0)}" fill="none" stroke="${d.color}" stroke-width="3.2" ${d.retired?'stroke-dasharray="7 6"':''}/>`;
+      const duplicate=`<polyline points="${coords(1,averagePace)}" fill="none" stroke="${d.color}" stroke-width="2.5" stroke-dasharray="5 7" opacity=".8"/>`;
       const last=points.at(-1);
       const pitDots=points.filter(p=>p.pit).map(p=>`<rect x="${x(p.lap)-5}" y="${y(p.y)-5}" width="10" height="10" fill="#0b121d" stroke="${d.color}" stroke-width="2"/>`).join("");
       return `${duplicate}${original}<circle cx="${x(last.lap)}" cy="${y(last.y)}" r="4" fill="${d.color}"/><text x="${Math.min(W-R+9,x(last.lap)+9)}" y="${y(last.y)+5}" fill="${d.color}" font-size="17" font-weight="700">${this.escape(d.label)}</text>${pitDots}`;
