@@ -915,7 +915,7 @@ class F1RaceTrace extends HTMLElement {
       const xr=this.xWindow||{start:fullStart,end:fullEnd};
       const yr=this.yWindow||{low:defaultLow,high:defaultHigh};
       const xSpan=Math.max(.1,(xr.end-xr.start)*factorX);
-      const ySpan=Math.max(.1,(yr.high-yr.low)*factorY);
+      const ySpan=Math.min(2*halfReferenceLap,Math.max(.1,(yr.high-yr.low)*factorY));
       const cx=xr.start+fx*(xr.end-xr.start);
       const cy=yr.high-fy*(yr.high-yr.low);
       this.xWindow={start:cx-fx*xSpan,end:cx+(1-fx)*xSpan};
@@ -967,7 +967,7 @@ class F1RaceTrace extends HTMLElement {
               factor=Math.max(.5,Math.min(2,this._panPrevious.distance/distance));
             const fx=Math.max(0,Math.min(1,((center.x-rect.left)/rect.width*W-L)/(W-L-R)));
             const fy=Math.max(0,Math.min(1,((center.y-rect.top)/rect.height*H-T)/(H-T-B)));
-            const nextX=spanX*factor,nextY=spanY*factor;
+            const nextX=spanX*factor,nextY=Math.min(2*halfReferenceLap,spanY*factor);
             const anchorX=xr.start+fx*spanX-dx;
             const anchorY=yr.high-fy*spanY+dy;
             this.xWindow={start:anchorX-fx*nextX,end:anchorX+(1-fx)*nextX};
