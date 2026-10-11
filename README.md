@@ -56,3 +56,24 @@ it overwrites the previous run's live file. The recorder captures changes seen
 by the Home Assistant sensor, not the original sub-second F1 feed. Its storage
 is an accumulating JSON document, so long sessions may grow large. The archive
 exporter is still a separate, one-time FastF1 operation.
+
+
+## Experimental shared pace and lapped-car wrapping
+
+The default live `AVERAGE` view now positions drivers against a common
+cumulative reference-lap baseline; observed gaps determine their separation.
+The timing recorder's timestamped samples are used when the card reopens.
+A lapped trace can be displayed one reference lap higher, as a dotted,
+disconnected path, without altering its original data.
+
+```yaml
+type: custom:f1-race-trace
+entity: sensor.f1_drivers_driver_positions
+lap_entity: sensor.f1_race_lap_count
+wrap_lapped: true  # default; set false to disable
+```
+
+This is experimental: a reference-lap-sized gap is an approximation of lap
+status, not definitive lap-down detection. Leader changes during pit cycles
+and SC/VSC periods require replay validation. `timing_engine: legacy` remains
+available as a fallback.
