@@ -63,16 +63,40 @@ class F1RaceTrace extends HTMLElement {
     if(!leader)return [];
     const laps=d=>new Map(Object.entries(d.laps||{}).map(([k,v])=>[Number(k),this.seconds(v)]).filter(([k,v])=>Number.isFinite(k)&&v!==null));
     const lead=laps(leader);
+    // Deleted lap times are absent from the sensor's laps map. Estimate only
+    // the missing duration; don't discard all earlier timing observations.
+    const all=sorted.map(laps);
+    const median=values=>{
+      const v=values.filter(Number.isFinite).sort((a,b)=>a-b);
+      return v.length?v[Math.floor(v.length/2)]:null;
+    };
+    const raceMedian=new Map();
+    for(const m of all)for(const n of m.keys())
+      if(!raceMedian.has(n))raceMedian.set(n,median(all.map(t=>t.get(n))));
+    const estimate=(times,n)=>{
+      if(times.has(n))return {time:times.get(n),estimated:false};
+      const nearby=[...times].filter(([k,v])=>Math.abs(k-n)<=2&&Number.isFinite(v)).sort((a,b)=>Math.abs(a[0]-n)-Math.abs(b[0]-n));
+      const local=median(nearby.slice(0,2).map(([,v])=>v));
+      return {time:local??raceMedian.get(n)??null,estimated:true};
+    };
+    const earliest=Math.min(...all.flatMap(m=>[...m.keys()]).filter(Number.isFinite));
     return sorted.map(d=>{
-      const own=laps(d), gap=d===leader?0:this.seconds(d.gap_to_leader);
+      const own=laps(d),gap=d===leader?0:this.seconds(d.gap_to_leader);
       const common=[...own.keys()].filter(k=>lead.has(k)).sort((a,b)=>a-b);
       const points=[];
-      if(gap!==null&&common.length){
+      if(gap!==null&&common.length&&Number.isFinite(earliest)){
         let value=gap;
-        for(let i=common.length-1;i>=0;i--){
-          const lap=common[i];points.push({lap,y:value});
-          if(i>0&&common[i-1]===lap-1)value-=own.get(lap)-lead.get(lap);
-          else if(i>0)value=NaN;
+        const last=common.at(-1);
+        // At a lap boundary, the difference in lap durations determines
+        // the change in gap. Estimate a deleted duration instead of breaking
+        // the whole earlier trace.
+        for(let n=last;n>=earliest;n--){
+          const ownTime=estimate(own,n),leaderTime=estimate(lead,n);
+          points.push({lap:n,y:value,estimated:ownTime.estimated||leaderTime.estimated});
+          if(n>earliest){
+            if(ownTime.time===null||leaderTime.time===null)break;
+            value-=ownTime.time-leaderTime.time;
+          }
         }
       }
       return {id:String(d.racing_number||d.tla),label:d.tla||d.name||"?",color:/^#[0-9a-f]{6}$/i.test(d.team_color||"")?d.team_color:"#aeb9c8",position:d.current_position,points:points.filter(p=>Number.isFinite(p.y)).reverse(),retired:!!d.retired};
