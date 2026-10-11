@@ -782,27 +782,6 @@ class F1RaceTrace extends HTMLElement {
     for(let i=0;i<=8;i++){const v=low+(high-low)*i/8;grid+=`<line x1="${L}" y1="${y(v)}" x2="${W-R}" y2="${y(v)}" stroke="#263245"/><text x="${L-9}" y="${y(v)+5}" text-anchor="end" fill="#93a4b9" font-size="17">${v.toFixed(1)}s</text>`;}
     const tickStep=Math.max(1,Math.ceil((viewEnd-viewStart)/14));
     for(let n=Math.max(1,Math.ceil(viewStart/tickStep)*tickStep);n<=viewEnd;n+=tickStep)grid+=`<line x1="${x(n)}" y1="${T}" x2="${x(n)}" y2="${H-B}" stroke="#202b39"/><text x="${x(n)}" y="${H-20}" text-anchor="middle" fill="#93a4b9" font-size="17">${n}</text>`;
-    if(this.config.debug){
-      const ver=traces.find(d=>d.label==="VER");
-      const pts=ver?.points||[];
-      const ys=pts.map(p=>p.y).filter(Number.isFinite);
-      const xs=pts.map(p=>p.lap).filter(Number.isFinite);
-      const recorded=(this.persistedRecording?.samples||[])
-        .flatMap(sample=>(sample.drivers||[]).filter(d=>d.tla==="VER")
-          .map(d=>({lap:sample.lap,gap:d.gap})));
-      console.info("[F1 Race Trace] VER visibility diagnostic",{
-        raceLap:lap,referencePace:averagePace,
-        window:{x:[viewStart,viewEnd],y:[low,high]},
-        recordedCount:recorded.length,
-        recordedFirst:recorded[0],recordedLast:recorded.at(-1),
-        plottedCount:pts.length,
-        xRange:xs.length?xs.reduce((range,v)=>[Math.min(range[0],v),Math.max(range[1],v)],[Infinity,-Infinity]):null,
-        yRange:ys.length?ys.reduce((range,v)=>[Math.min(range[0],v),Math.max(range[1],v)],[Infinity,-Infinity]):null,
-        insideWindow:pts.filter(p=>p.lap>=viewStart&&p.lap<=viewEnd&&p.y>=low&&p.y<=high).length,
-        firstPoints:pts.slice(0,3),lastPoints:pts.slice(-3),
-        hidden:ver?this.hiddenDrivers.has(ver.id):null
-      });
-    }
     // FIA race-control events are stored independently of the timing trace.
     // Draw neutralised periods behind the cars; never infer them from gaps.
     const controlEvents=this.persistedRecording?.race_control||[];
