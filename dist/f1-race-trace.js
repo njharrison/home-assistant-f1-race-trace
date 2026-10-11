@@ -453,7 +453,7 @@ class F1RaceTrace extends HTMLElement {
           else if(!last||x>last.lap)restored.push({lap:x,y,estimated:true});
         }
         const raw=rawById.get(d.id);
-        const isLeader=d.id===leaderId||/^LAP\\s+\\d+$/i.test(String(raw?.gap_to_leader??"").trim());
+        const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(String(raw?.gap_to_leader??"").trim());
         const gap=isLeader?0:this.seconds(raw?.gap_to_leader);
         const lastRecordedX=restored.at(-1)?.lap??-Infinity;
         const existing=this.gapTraceHistory.get(d.id);
