@@ -228,7 +228,13 @@ class F1RaceTrace extends HTMLElement {
         for(const p of d.points)if(!history.has(p.lap))history.set(p.lap,{...p});
         // Sector events have their own fractional-lap keys; retain them
         // alongside frozen lap points instead of replacing them.
-        d.points=[...history.values(),...(this.sectorHistory.get(d.id)?.values()||[])].filter(p=>p.lap<=lap).sort((a,b)=>a.lap-b.lap);
+        // Prefer measured sector points over reconstructed lap points at the
+        // same X. A polyline must never join conflicting Y values vertically.
+        const merged=new Map();
+        for(const p of history.values())if(Number.isFinite(p.lap))merged.set(p.lap.toFixed(6),p);
+        for(const p of this.sectorHistory.get(d.id)?.values()||[])
+          if(Number.isFinite(p.lap))merged.set(p.lap.toFixed(6),p);
+        d.points=[...merged.values()].filter(p=>p.lap<=lap).sort((a,b)=>a.lap-b.lap);
       }
     }
     // Intra-sector snapshots: infer fractional progress from the time since
@@ -271,7 +277,9 @@ class F1RaceTrace extends HTMLElement {
           if(state.samples.length>180)state.samples.shift();
         }
         d.points.push(...state.samples.filter(p=>p.lap>anchorX&&p.lap<anchorX+1/3));
-        d.points.sort((a,b)=>a.lap-b.lap);
+        const unique=new Map();
+        for(const p of d.points)if(Number.isFinite(p.lap)&&Number.isFinite(p.y))unique.set(p.lap.toFixed(6),p);
+        d.points=[...unique.values()].sort((a,b)=>a.lap-b.lap);
       }
     }
     for(const d of traces)d.points=d.points.filter(p=>Number.isFinite(p.y));
