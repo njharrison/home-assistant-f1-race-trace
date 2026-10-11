@@ -77,3 +77,19 @@ This is experimental: a reference-lap-sized gap is an approximation of lap
 status, not definitive lap-down detection. Leader changes during pit cycles
 and SC/VSC periods require replay validation. `timing_engine: legacy` remains
 available as a fallback.
+
+## FIA Safety Car / Virtual Safety Car recording (add-on v0.3.4)
+
+The recorder also polls Nicxe F1 Sensor's `sensor.f1_race_control`
+(configurable as `race_control_entity` in add-on options), deduplicates
+race-control messages using their event IDs, and saves them under
+`race_control` in the existing `live-recording.json`. The card displays
+recorded SC and VSC periods as shaded regions. Existing recordings without
+race-control events remain compatible.
+
+**Installation:** Update the timing add-on to v0.3.4 and rebuild/restart it.
+Refresh the Lovelace card's JavaScript resource to the latest commit.
+New events are recorded from then onward; earlier replay history cannot be
+recovered from the existing driver-only recording. Replay rewind resets the
+event list. Nicxe's sensor only exposes its latest five messages, so the
+recorder should remain running to avoid missing older events.
