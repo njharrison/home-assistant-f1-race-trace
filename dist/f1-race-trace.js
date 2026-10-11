@@ -52,7 +52,7 @@ class F1RaceTrace extends HTMLElement {
   async loadRecording(){
     if(this.config.recording_url===false||this.config.timing_engine==="legacy")return;
     const now=Date.now();
-    if(now-this.recordingFetchAt<5000)return;
+    if(now-this.recordingFetchAt<1000)return;
     this.recordingFetchAt=now;
     try{
       const response=await fetch(this.config.recording_url||"/local/f1-race-trace/live-recording.json",{cache:"no-store"});
@@ -445,6 +445,15 @@ class F1RaceTrace extends HTMLElement {
           }
         }
       }
+      // The recorder is the authoritative live clock. Derive the current
+      // position from its latest observation, not a separate render timer.
+      const currentRows=byLap.get(lap)||[];
+      const latestSample=currentRows.at(-1);
+      const currentLapStart=startByLap.get(lap);
+      const recorderX=latestSample&&Number.isFinite(currentLapStart)
+        ?Math.max(1,lap-1+Math.min(.999,Math.max(0,(Number(latestSample.timestamp)-currentLapStart)/Math.max(1,replayLapDuration))))
+        :null;
+      const recorderFresh=latestSample&&now-Number(latestSample.timestamp)*1000<6000;
       // Rebuild both history and live points against the SAME baseline.
       for(const d of traces){
         const observations=byId.get(d.id)||[];
@@ -470,9 +479,11 @@ class F1RaceTrace extends HTMLElement {
         const liveTail=(existing?.points||[]).filter(p=>p.live&&p.lap>lastRecordedX+.0001)
           .map(p=>({...p,y:baselineAt(p.lap)-p.gap}));
         const points=[...restored,...liveTail];
-        if(gap!==null){
+        // When recording is fresh, its per-second snapshots already contain
+        // the current gap. Never overwrite those with an older HA sensor.
+        if(gap!==null&&!recorderFresh){
           const latest=points.at(-1)?.lap??-Infinity;
-          const x=Math.max(liveX,latest);
+          const x=Math.max(recorderX??liveX,latest);
           if(x>latest+.0001)points.push({lap:x,y:baselineAt(x)-gap,gap,live:true,estimated:true});
           else if(points.length&&points.at(-1).live)
             points[points.length-1]={lap:x,y:baselineAt(x)-gap,gap,live:true,estimated:true};
