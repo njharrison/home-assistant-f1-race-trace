@@ -471,7 +471,12 @@ class F1RaceTrace extends HTMLElement {
     for(const d of traces)d.points=d.points.filter(p=>Number.isFinite(p.y));
     const chartLap=Math.max(lap,...traces.flatMap(d=>d.points.map(p=>p.lap)).filter(Number.isFinite),1);
     const chartEnd=Math.max(lap+0.35,chartLap+0.1);
-    const values=traces.flatMap(d=>d.points.map(p=>p.y));
+    const wrapEnabled=this.config.wrap_lapped!==false&&useGapEngine;
+    const displayTraces=traces.map(d=>({...d,points:d.points.map(p=>{
+      const wraps=wrapEnabled&&Number.isFinite(p.gap)?Math.max(0,Math.floor((p.gap+1e-6)/averagePace)):0;
+      return {...p,wraps,displayY:p.y+wraps*averagePace};
+    })}));
+    const values=displayTraces.flatMap(d=>d.points.map(p=>p.displayY));
     let low=Math.min(0,...values),high=Math.max(0,...values);
     const margin=Math.max(3,(high-low)*.08);low-=margin;high+=margin;
     if(!this.fixedScale)this.fixedScale={low,high};
@@ -483,24 +488,24 @@ class F1RaceTrace extends HTMLElement {
     let grid="";
     for(let i=0;i<=8;i++){const v=low+(high-low)*i/8;grid+=`<line x1="${L}" y1="${y(v)}" x2="${W-R}" y2="${y(v)}" stroke="#263245"/><text x="${L-9}" y="${y(v)+5}" text-anchor="end" fill="#93a4b9" font-size="17">${v.toFixed(1)}s</text>`;}
     for(let n=1;n<=chartEnd;n+=Math.max(1,Math.ceil(chartEnd/14)))grid+=`<line x1="${x(n)}" y1="${T}" x2="${x(n)}" y2="${H-B}" stroke="#202b39"/><text x="${x(n)}" y="${H-20}" text-anchor="middle" fill="#93a4b9" font-size="17">${n}</text>`;
-    const lines=traces.filter(d=>d.points.length>0).map(d=>{
+    const lines=displayTraces.filter(d=>d.points.length>0).map(d=>{
       // Split discontinuities rather than drawing artificial near-vertical
       // connections between estimates and timing-line observations.
       const segments=[];
       let segment=[];
       for(const p of d.points){
         const prev=segment.at(-1);
-        if(prev&&(p.lap-prev.lap<0.025&&Math.abs(p.y-prev.y)>1.5)){
+        if(prev&&(p.wraps!==prev.wraps||(p.lap-prev.lap<0.025&&Math.abs(p.displayY-prev.displayY)>1.5))){
           if(segment.length)segments.push(segment);
           segment=[];
         }
         segment.push(p);
       }
       if(segment.length)segments.push(segment);
-      const paths=segments.map(points=>`<polyline points="${points.map(p=>`${x(p.lap).toFixed(1)},${y(p.y).toFixed(1)}`).join(" ")}" fill="none" stroke="${d.color}" stroke-width="3.2" ${d.retired?'stroke-dasharray="7 6"':''}/>`).join("");
+      const paths=segments.map(points=>`<polyline points="${points.map(p=>`${x(p.lap).toFixed(1)},${y(p.displayY).toFixed(1)}`).join(" ")}" fill="none" stroke="${d.color}" stroke-width="3.2" ${(d.retired||points[0]?.wraps>0)?'stroke-dasharray="7 6"':''}/>`).join("");
       const last=d.points.at(-1);
-      const pitDots=d.points.filter(p=>p.pit).map(p=>`<rect x="${x(p.lap)-5}" y="${y(p.y)-5}" width="10" height="10" fill="#0b121d" stroke="${d.color}" stroke-width="2"/>`).join("");
-      return `${paths}<circle cx="${x(last.lap)}" cy="${y(last.y)}" r="4" fill="${d.color}"/><text x="${Math.min(W-R+9,x(last.lap)+9)}" y="${y(last.y)+5}" fill="${d.color}" font-size="17" font-weight="700">${this.escape(d.label)}</text>${pitDots}`;
+      const pitDots=d.points.filter(p=>p.pit).map(p=>`<rect x="${x(p.lap)-5}" y="${y(p.displayY)-5}" width="10" height="10" fill="#0b121d" stroke="${d.color}" stroke-width="2"/>`).join("");
+      return `${paths}<circle cx="${x(last.lap)}" cy="${y(last.displayY)}" r="4" fill="${d.color}"/><text x="${Math.min(W-R+9,x(last.lap)+9)}" y="${y(last.displayY)+5}" fill="${d.color}" font-size="17" font-weight="700">${this.escape(d.label)}${last.wraps?" −"+last.wraps+" lap"+(last.wraps>1?"s":""):""}</text>${pitDots}`;
     }).join("");
     const opts=[{id:"AVERAGE",label:"Average race pace"},{id:"LEADER",label:"Race leader"},...drivers.map(d=>({id:d.id,label:d.label}))];
     this.shadowRoot.innerHTML=`<style>
