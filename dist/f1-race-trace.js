@@ -687,9 +687,12 @@ class F1RaceTrace extends HTMLElement {
           // enforcing monotonic X pins many points to the same coordinate,
           // creating artificial vertical bars. Plot lap-one gaps against
           // the shared race clock; retain normal offset geometry afterwards.
-          const targetX=obs.raceX<2?obs.raceX
-            :leaderMarker?obs.raceX:plottedX(obs.raceX,gap);
-          const driverX=advanceX(previous,targetX);
+          // A discontinuous switch from race-clock X to gap-offset X at
+          // lap two makes trailing cars jump backwards. The monotonic-X
+          // clamp then pins them in place, creating vertical drops and
+          // long horizontal shelves. Keep a continuous race-clock X for
+          // the entire recording; the Y coordinate already carries gap.
+          const driverX=advanceX(previous,obs.raceX);
           history.push({lap:driverX,raceLap:obs.raceX,gap,at:obs.at});
         }
         byId.set(id,history);
