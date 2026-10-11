@@ -408,6 +408,22 @@ class F1RaceTrace extends HTMLElement {
         byLap.get(n).push(sample);
       }
       const byId=new Map();
+      // Keep the metadata of drivers who disappear from the live sensor
+      // after retirement. Their recorded trace must remain visible.
+      const recordedDrivers=new Map();
+      for(const rows of byLap.values())for(const sample of rows)
+        for(const row of sample.drivers||[]){
+          const id=String(row.id??"");
+          if(id&&row.tla)recordedDrivers.set(id,row);
+        }
+      for(const [id,row] of recordedDrivers){
+        if(this.hiddenDrivers.has(id)||traces.some(d=>d.id===id))continue;
+        const previous=this.gapTraceHistory.get(id);
+        const source=drivers.find(d=>d.id===id);
+        const teamColor=source?.color||previous?.color||"#9faec2";
+        traces.push({id,label:row.tla,color:teamColor,position:row.position,
+          retired:true,points:[]});
+      }
       const lapsSorted=[...byLap.keys()].sort((a,b)=>a-b);
       // Race-wide lap transition timestamps form a single replay clock.
       // The next lap's first observation closes the previous interval.
@@ -513,7 +529,7 @@ class F1RaceTrace extends HTMLElement {
           if(!previous||Math.abs(previous.raceLap-raceX)>.00001||Math.abs(previous.gap-gap)>.0001)
             points.push({lap:x,y:baselineAt(raceX)-gap,gap,raceLap:raceX,live:true,estimated:true});
         }
-        this.gapTraceHistory.set(d.id,{points,lastGap:gap});
+        this.gapTraceHistory.set(d.id,{points,lastGap:gap,color:d.color});
         d.points=points.filter(p=>p.raceLap===undefined||p.raceLap<=lap);
       }
     }
