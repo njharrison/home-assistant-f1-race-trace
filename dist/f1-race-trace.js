@@ -682,7 +682,14 @@ class F1RaceTrace extends HTMLElement {
           // Keep the leader on the race-clock X axis. If a stale or
           // temporarily absent leader marker arrives, the fallback must
           // not shift their whole trace a lap behind.
-          const driverX=advanceX(previous,leaderMarker?obs.raceX:plottedX(obs.raceX,gap));
+          // During the opening lap, gaps change rapidly as the field spreads
+          // out from the grid. Subtracting those gaps from X and then
+          // enforcing monotonic X pins many points to the same coordinate,
+          // creating artificial vertical bars. Plot lap-one gaps against
+          // the shared race clock; retain normal offset geometry afterwards.
+          const targetX=obs.raceX<2?obs.raceX
+            :leaderMarker?obs.raceX:plottedX(obs.raceX,gap);
+          const driverX=advanceX(previous,targetX);
           history.push({lap:driverX,raceLap:obs.raceX,gap,at:obs.at});
         }
         byId.set(id,history);
