@@ -472,7 +472,13 @@ class F1RaceTrace extends HTMLElement {
             const gap=/^LAP\s+\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
             if(gap===null)continue;
             if(!byId.has(id))byId.set(id,[]);
-            byId.get(id).push({lap:plottedX(x,gap,row),raceLap:x,gap,at:sample.timestamp});
+            const history=byId.get(id);
+            const previous=history.at(-1);
+            // A gap increase can slow or stop the driver, but must not
+            // reverse their progress. Preserve identical X for verticals.
+            const rawX=plottedX(x,gap,row);
+            const driverX=previous?Math.max(previous.lap,rawX):rawX;
+            history.push({lap:driverX,raceLap:x,gap,at:sample.timestamp});
           }
         }
       }
@@ -499,19 +505,19 @@ class F1RaceTrace extends HTMLElement {
         const raw=rawById.get(d.id);
         const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(String(raw?.gap_to_leader??"").trim());
         const gap=isLeader?0:this.seconds(raw?.gap_to_leader);
-        const lastRecordedX=restored.at(-1)?.lap??-Infinity;
+        const lastRecordedRaceX=restored.at(-1)?.raceLap??-Infinity;
         const existing=this.gapTraceHistory.get(d.id);
-        const liveTail=(existing?.points||[]).filter(p=>p.live&&p.lap>lastRecordedX+.0001)
+        const liveTail=(existing?.points||[]).filter(p=>p.live&&(p.raceLap??p.lap)>lastRecordedRaceX+.0001)
           .map(p=>({...p,y:baselineAt(p.raceLap??p.lap)-p.gap}));
         const points=[...restored,...liveTail];
         // When recording is fresh, its per-second snapshots already contain
         // the current gap. Never overwrite those with an older HA sensor.
         if(gap!==null&&!recorderFresh){
           const raceX=recorderX??liveX;
-          const x=plottedX(raceX,gap,raw);
-          // X is allowed to remain stationary or move backwards while the
-          // gap increases. Preserve those samples instead of overwriting them.
           const previous=points.at(-1);
+          const rawX=plottedX(raceX,gap,raw);
+          const x=previous?Math.max(previous.lap,rawX):rawX;
+          // Retain stationary samples; they produce genuine vertical traces.
           if(!previous||Math.abs(previous.raceLap-raceX)>.00001||Math.abs(previous.gap-gap)>.0001)
             points.push({lap:x,y:baselineAt(raceX)-gap,gap,raceLap:raceX,live:true,estimated:true});
         }
