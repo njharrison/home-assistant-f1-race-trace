@@ -507,12 +507,13 @@ class F1RaceTrace extends HTMLElement {
         // When recording is fresh, its per-second snapshots already contain
         // the current gap. Never overwrite those with an older HA sensor.
         if(gap!==null&&!recorderFresh){
-          const latest=points.at(-1)?.lap??-Infinity;
           const raceX=recorderX??liveX;
           const x=plottedX(raceX,gap,raw);
-          if(x>latest+.0001)points.push({lap:x,y:baselineAt(raceX)-gap,gap,raceLap:raceX,live:true,estimated:true});
-          else if(points.length&&points.at(-1).live)
-            points[points.length-1]={lap:x,y:baselineAt(raceX)-gap,gap,raceLap:raceX,live:true,estimated:true};
+          // X is allowed to remain stationary or move backwards while the
+          // gap increases. Preserve those samples instead of overwriting them.
+          const previous=points.at(-1);
+          if(!previous||Math.abs(previous.raceLap-raceX)>.00001||Math.abs(previous.gap-gap)>.0001)
+            points.push({lap:x,y:baselineAt(raceX)-gap,gap,raceLap:raceX,live:true,estimated:true});
         }
         this.gapTraceHistory.set(d.id,{points,lastGap:gap});
         d.points=points.filter(p=>p.raceLap===undefined||p.raceLap<=lap);
