@@ -607,37 +607,53 @@ class F1RaceTrace extends HTMLElement {
         e.preventDefault();
         zoom(e.deltaY>0?1.18:1/1.18,viewStart+pointerX(e)*(viewEnd-viewStart));
       },{passive:false});
-      const pointers=new Map();
-      let previous=null;
+      // Window-level handlers survive render() replacing the SVG during a drag.
       svg.addEventListener("pointerdown",e=>{
-        pointers.set(e.pointerId,e.clientX);
-        svg.setPointerCapture(e.pointerId);
-        previous=null;
-      });
-      svg.addEventListener("pointermove",e=>{
-        if(!pointers.has(e.pointerId))return;
-        pointers.set(e.pointerId,e.clientX);
-        const positions=[...pointers.values()].sort((a,b)=>a-b);
-        const rect=svg.getBoundingClientRect();
-        const center=positions.reduce((a,b)=>a+b,0)/positions.length;
-        const distance=positions.length>1?positions.at(-1)-positions[0]:null;
-        if(previous){
-          const span=viewEnd-viewStart;
-          const dx=(center-previous.center)/rect.width*W/(W-L-R)*span;
-          let width=span;
-          if(distance!==null&&previous.distance!==null&&distance>4&&previous.distance>4)
-            width=Math.max(.35,Math.min(fullEnd-fullStart,span*previous.distance/distance));
-          const fraction=Math.max(0,Math.min(1,(center-rect.left)/rect.width*W-L)/(W-L-R));
-          const start=Math.max(fullStart,Math.min(fullEnd-width,viewStart-dx+(span-width)*fraction));
-          this.xWindow={start,end:start+width};
-          this.render();
-          return;
+        if(e.pointerType==="mouse"&&e.button!==0)return;
+        e.preventDefault();
+        if(!this._panPointers)this._panPointers=new Map();
+        this._panPointers.set(e.pointerId,e.clientX);
+        this._panPrevious=null;
+        if(!this._panMove){
+          this._panMove=event=>{
+            if(!this._panPointers?.has(event.pointerId))return;
+            this._panPointers.set(event.pointerId,event.clientX);
+            const positions=[...this._panPointers.values()].sort((a,b)=>a-b);
+            const center=positions.reduce((a,b)=>a+b,0)/positions.length;
+            const distance=positions.length>1?positions.at(-1)-positions[0]:null;
+            const rect=this.shadowRoot.querySelector(".chart svg")?.getBoundingClientRect();
+            if(!rect)return;
+            if(this._panPrevious){
+              const full=Math.max(2,this.lastLap+.35);
+              const start=this.xWindow?.start??1;
+              const end=this.xWindow?.end??full;
+              const span=end-start;
+              const dx=(center-this._panPrevious.center)/rect.width*W/(W-L-R)*span;
+              let width=span;
+              if(distance!==null&&this._panPrevious.distance!==null&&distance>4&&this._panPrevious.distance>4)
+                width=Math.max(.35,Math.min(full-1,span*this._panPrevious.distance/distance));
+              const fraction=Math.max(0,Math.min(1,((center-rect.left)/rect.width*W-L)/(W-L-R)));
+              const next=Math.max(1,Math.min(full-width,start-dx+(span-width)*fraction));
+              this.xWindow={start:next,end:next+width};
+              this.render();
+            }
+            this._panPrevious={center,distance};
+          };
+          this._panEnd=event=>{
+            this._panPointers?.delete(event.pointerId);
+            this._panPrevious=null;
+            if(!this._panPointers?.size){
+              window.removeEventListener("pointermove",this._panMove);
+              window.removeEventListener("pointerup",this._panEnd);
+              window.removeEventListener("pointercancel",this._panEnd);
+              this._panMove=null;
+            }
+          };
+          window.addEventListener("pointermove",this._panMove);
+          window.addEventListener("pointerup",this._panEnd);
+          window.addEventListener("pointercancel",this._panEnd);
         }
-        previous={center,distance};
       });
-      const release=e=>{pointers.delete(e.pointerId);previous=null;};
-      svg.addEventListener("pointerup",release);
-      svg.addEventListener("pointercancel",release);
     }
     this.shadowRoot.getElementById("reference")?.addEventListener("change",e=>{this.reference=e.target.value;this.render();});
     this.shadowRoot.querySelectorAll("[data-driver]").forEach(b=>b.addEventListener("click",()=>{const id=b.dataset.driver;this.hiddenDrivers.has(id)?this.hiddenDrivers.delete(id):this.hiddenDrivers.add(id);this.render();}));
