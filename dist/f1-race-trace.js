@@ -20,6 +20,7 @@ class F1RaceTrace extends HTMLElement {
     this.gapSamples = new Map();
     this.gapTraceHistory = new Map();
     this.gapClock = null;
+    this.gapBaseline = null;
   }
   setConfig(config) {
     this.config = {entity:"sensor.f1_drivers_driver_positions",lap_entity:"sensor.f1_race_lap_count",height:"85vh",archive_url:null,...config};
@@ -31,6 +32,7 @@ class F1RaceTrace extends HTMLElement {
     this.gapSamples.clear();
     this.gapTraceHistory.clear();
     this.gapClock=null;
+    this.gapBaseline=null;
     this.loadArchive();
     this.render();
   }
@@ -168,7 +170,7 @@ class F1RaceTrace extends HTMLElement {
     const liveDrivers=Array.isArray(raw)?raw:[];
     const drivers=(this.config.archive_url&&this.archiveDrivers(liveDrivers))||this.data(liveDrivers);
     const lap=Math.max(1,Number(hass?.states?.[this.config.lap_entity]?.state)||1);
-    if(this.lastLap!==null&&lap<this.lastLap){this.liveHistory.clear();this.sectorHistory.clear();this.gapSamples.clear();this.gapTraceHistory.clear();this.gapClock=null;this.fixedScale=null;this.fixedPace=null;}
+    if(this.lastLap!==null&&lap<this.lastLap){this.liveHistory.clear();this.sectorHistory.clear();this.gapSamples.clear();this.gapTraceHistory.clear();this.gapClock=null;this.gapBaseline=null;this.fixedScale=null;this.fixedPace=null;}
     this.lastLap=lap;
     const active=drivers.filter(d=>!this.hiddenDrivers.has(d.id)&&((this.config.archive_url&&d.points.some(p=>p.lap<=lap))||!this.config.archive_url));
     const reference=drivers.find(d=>d.id===this.reference);
@@ -338,38 +340,50 @@ class F1RaceTrace extends HTMLElement {
         d.points=[...unique.values()].sort((a,b)=>a.lap-b.lap);
       }
     }
-    // v0.3: one shared race clock and gap-derived separation for all drivers.
-    // Completed laps seed historical traces, but never overwrite live samples.
-    // Lap/sector updates cannot individually snap a driver to another model.
+    // v0.3: freeze one gap-based sample stream per driver. A completed lap
+    // changes the x-axis stage, not the y-axis origin.
     if(useGapEngine){
       const now=Date.now();
-      if(!this.gapClock||this.gapClock.lap!==lap)
+      if(!this.gapClock)this.gapClock={lap,start:now};
+      if(lap!==this.gapClock.lap){
+        // The race clock can advance more than one lap on a replay seek.
         this.gapClock={lap,start:now};
+      }
       const fraction=Math.min(.98,Math.max(0,(now-this.gapClock.start)/1000/Math.max(1,averagePace)));
       const liveX=Math.max(1,lap-1+fraction);
-      const leaderCompleted=leaderDeviation.get(lap-1);
-      const leaderPrior=leaderDeviation.get(lap-2);
-      const baseline=Number.isFinite(leaderCompleted)?-leaderCompleted:
-        Number.isFinite(leaderPrior)?-leaderPrior:0;
       const rawById=new Map(liveDrivers.map(d=>[String(d.racing_number||d.tla),d]));
+      const leaderId=String(leaderLive?.racing_number||leaderLive?.tla||"");
+      const leaderRaw=rawById.get(leaderId);
+      const leaderGap=leaderRaw?0:null;
+      // Integrate the leader's pace on one continuous baseline. The lap
+      // deviation is applied only when the lap counter changes.
+      if(!this.gapBaseline)this.gapBaseline={lap,value:0};
+      if(lap<this.gapBaseline.lap)this.gapBaseline={lap,value:0};
+      if(lap>this.gapBaseline.lap){
+        for(let n=this.gapBaseline.lap;n<lap;n++){
+          const t=leaderTimes.get(n);
+          if(t!==undefined)this.gapBaseline.value+=averagePace-t;
+        }
+        this.gapBaseline.lap=lap;
+      }
       for(const d of traces){
         const raw=rawById.get(d.id);
-        const gap=raw&&(/^LAP\\s+\\d+$/i.test(String(raw.gap_to_leader??"").trim())?0:this.seconds(raw.gap_to_leader));
+        const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(String(raw?.gap_to_leader??"").trim());
+        const gap=isLeader?0:this.seconds(raw?.gap_to_leader);
         let state=this.gapTraceHistory.get(d.id);
         if(!state){
+          // Historical reconstruction is only a starting approximation;
+          // don't splice it onto a live stream at every new lap.
           const seed=d.points.filter(p=>Number.isFinite(p.y)&&p.lap<liveX-.005).map(p=>({...p}));
           const last=seed.at(-1);
-          // Align the live reference at the handoff; keep the observed
-          // gap changes thereafter without rescaling individual lap points.
-          state={points:seed,offset:last?last.y-(baseline-(gap??0)):0,lastGap:gap};
+          const origin=this.gapBaseline.value-(gap??0);
+          state={points:seed,offset:last?last.y-origin:0,lastGap:gap};
           this.gapTraceHistory.set(d.id,state);
         }
-        if(gap!==null&&gap!==undefined){
-          const target=baseline-gap+state.offset;
+        if(gap!==null){
           const last=state.points.at(-1);
+          const target=this.gapBaseline.value-gap+state.offset;
           if(!last||liveX>last.lap+.0001){
-            // Do not create a steep join when the initial historical anchor
-            // is already at the current lap boundary.
             state.points.push({lap:liveX,y:target,estimated:true});
             if(state.points.length>3000)state.points.splice(0,state.points.length-3000);
           }
