@@ -849,7 +849,7 @@ class F1RaceTrace extends HTMLElement {
     if(caution){
       const latest=Number(recordedSamples.at(-1)?.timestamp);
       if(Number.isFinite(latest)&&latest>=caution.start)
-        controlPeriods.push({...caution,end:latest});
+        controlPeriods.push({...caution,end:latest,active:true});
     }
     // Isochrones in the race trace satisfy x*referencePace - y = constant.
     // Consequently an event occurring at one instant is a diagonal line,
@@ -860,16 +860,16 @@ class F1RaceTrace extends HTMLElement {
       return raceX===null?NaN:x(raceX+ySeconds/averagePace);
     };
     const cautionBands=controlAnchors.length?controlPeriods.map(p=>{
-      if(!(p.end>p.start))return "";
+      if(!(p.end>p.start)&&!p.active)return "";
       const color=p.type==="VSC"?"#e5b84b":"#f5a15b";
       const top=high,bottom=low;
       const xStartTop=timeBoundaryX(p.start,top);
       const xStartBottom=timeBoundaryX(p.start,bottom);
-      const xEndTop=timeBoundaryX(p.end,top);
-      const xEndBottom=timeBoundaryX(p.end,bottom);
+      const xEndTop=p.active?W-R:timeBoundaryX(p.end,top);
+      const xEndBottom=p.active?W-R:timeBoundaryX(p.end,bottom);
       const polygon=[xStartTop+","+y(top),xEndTop+","+y(top),
         xEndBottom+","+y(bottom),xStartBottom+","+y(bottom)].join(" ");
-      return `<polygon points="${polygon}" fill="${color}" opacity=".10"/>
+      return `<polygon points="${polygon}" fill="${color}" opacity=".20"/>
         <line x1="${xStartTop}" y1="${y(top)}" x2="${xStartBottom}" y2="${y(bottom)}" stroke="${color}" stroke-width="2" stroke-dasharray="6 5"/>
         <text x="${Math.max(L+5,Math.min(W-R-35,xStartTop+5))}" y="${T+18}" fill="${color}" font-size="13" font-weight="700">${p.type}</text>`;
     }).join(""):"";
