@@ -417,8 +417,9 @@ class F1RaceTrace extends HTMLElement {
           if(!id)continue;
           const entry=recordedDrivers.get(id)||{id,tla:row.tla,hasGap:false};
           if(row.tla)entry.tla=row.tla;
-          const numericGap=/^LAP\s+\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
-          if(numericGap!==null)entry.hasGap=true;
+          const gapText=String(row.gap??"").trim();
+          const numericGap=/^LAP\s+\d+$/i.test(gapText)?0:this.seconds(gapText);
+          if(numericGap!==null||/^(\d+)\s+LAPS?$/i.test(gapText))entry.hasGap=true;
           recordedDrivers.set(id,entry);
         }
       // The saved recording, not the current sensor's driver list, defines
@@ -486,11 +487,26 @@ class F1RaceTrace extends HTMLElement {
           const x=Math.max(1,n-1+Math.min(.999,elapsed/Math.max(1,duration)));
           for(const row of sample.drivers||[]){
             const id=String(row.id);
-            const gap=/^LAP\s+\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
-            if(gap===null)continue;
             if(!byId.has(id))byId.set(id,[]);
             const history=byId.get(id);
             const previous=history.at(-1);
+            const gapText=String(row.gap??"").trim();
+            // "LAP 17" is the leader's lap marker; "1 LAP" is a
+            // lapped driver's gap and must never be treated as zero.
+            const leaderMarker=/^LAP\s+\d+$/i.test(gapText);
+            const lapDeficit=gapText.match(/^(\d+)\s+LAPS?$/i);
+            let gap=leaderMarker?0:this.seconds(gapText);
+            if(lapDeficit){
+              const minimum=Number(lapDeficit[1])*averagePace;
+              // Keep the first transition continuous with the last numeric
+              // gap. Until the feed supplies seconds again, a lap deficit
+              // is only an approximation, not a measured second gap.
+              const prior=previous?.gap;
+              gap=prior!==undefined&&prior>=minimum-averagePace*.35
+                ?Math.max(prior,minimum-averagePace*.35)
+                :minimum;
+            }
+            if(gap===null)continue;
             // A gap increase can slow or stop the driver, but must not
             // reverse their progress. Preserve identical X for verticals.
             const rawX=plottedX(x,gap);
@@ -528,8 +544,17 @@ class F1RaceTrace extends HTMLElement {
           restored.push({lap:x,y,estimated:true,gap:observation.gap,raceLap:observation.raceLap});
         }
         const raw=rawById.get(d.id);
-        const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(String(raw?.gap_to_leader??"").trim());
-        const gap=isLeader?0:this.seconds(raw?.gap_to_leader);
+        const rawGapText=String(raw?.gap_to_leader??"").trim();
+        const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(rawGapText);
+        const lapDeficit=rawGapText.match(/^(\d+)\s+LAPS?$/i);
+        let gap=isLeader?0:this.seconds(raw?.gap_to_leader);
+        if(lapDeficit){
+          const minimum=Number(lapDeficit[1])*averagePace;
+          const prior=restored.at(-1)?.gap??this.gapTraceHistory.get(d.id)?.lastGap;
+          gap=Number.isFinite(prior)&&prior>=minimum-averagePace*.35
+            ?Math.max(prior,minimum-averagePace*.35)
+            :minimum;
+        }
         const lastRecordedRaceX=restored.at(-1)?.raceLap??-Infinity;
         const existing=this.gapTraceHistory.get(d.id);
         const liveTail=(existing?.points||[]).filter(p=>p.live&&(p.raceLap??p.lap)>lastRecordedRaceX+.0001)
