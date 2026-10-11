@@ -367,36 +367,34 @@ class F1RaceTrace extends HTMLElement {
         d.points=[...unique.values()].sort((a,b)=>a.lap-b.lap);
       }
     }
-    // v0.4: One shared cumulative reference. Never re-anchor individual
-    // drivers: at a given race-clock instant, differences MUST equal gaps.
+    // v0.5: derive every point from the same continuous leader timeline.
+    // Do not join independently reconstructed lap history to live gaps.
     if(useGapEngine){
       const now=Date.now();
-      const rawById=new Map(liveDrivers.map(d=>[String(d.racing_number||d.tla),d]));
       const leaderId=String(leaderLive?.racing_number||leaderLive?.tla||"");
+      const rawById=new Map(liveDrivers.map(d=>[String(d.racing_number||d.tla),d]));
       const gapOf=raw=>{
         if(!raw)return null;
-        if(String(raw.racing_number||raw.tla)===leaderId||
-           /^LAP\\s+\\d+$/i.test(String(raw.gap_to_leader??raw.gap??"").trim()))return 0;
-        return this.seconds(raw.gap_to_leader??raw.gap);
+        const value=String(raw.gap_to_leader??raw.gap??"").trim();
+        if(/^LAP\s+\d+$/i.test(value))return 0;
+        return this.seconds(value);
       };
-      // Cumulative reference-pace gain at each completed leader lap.
-      // A missing/deleted lap uses the fixed reference, never resets the sum.
+      // Completed laps determine the slope for their entire interval.
+      // A missing lap has zero deviation (reference pace), not a reset.
       const baseline=new Map([[0,0]]);
-      let cumulative=0;
+      let sum=0;
       for(let n=1;n<=lap;n++){
-        const t=leaderTimes.get(n);
-        cumulative+=t===undefined?0:averagePace-t;
-        baseline.set(n,cumulative);
+        sum+=averagePace-(leaderTimes.get(n)??averagePace);
+        baseline.set(n,sum);
       }
       const at=x=>{
-        const n=Math.max(0,Math.floor(x));
+        const n=Math.max(0,Math.min(lap,Math.floor(x)));
         const f=Math.max(0,Math.min(1,x-n));
-        return (baseline.get(n)??cumulative)+f*((baseline.get(n+1)??baseline.get(n)??cumulative)-(baseline.get(n)??cumulative));
+        const left=baseline.get(n)??sum;
+        return left+f*((baseline.get(n+1)??left)-left);
       };
-      // Restore actual timestamp spacing inside each lap, rather than
-      // collapsing every sample in a sector to the same X coordinate.
+      // Recorded snapshots use a consistent per-lap timestamp clock.
       const saved=this.persistedRecording?.samples||[];
-      const restored=new Map();
       const perLap=new Map();
       for(const sample of saved){
         const n=Number(sample.lap);
@@ -404,15 +402,18 @@ class F1RaceTrace extends HTMLElement {
         if(!perLap.has(n))perLap.set(n,[]);
         perLap.get(n).push(sample);
       }
+      const restored=new Map();
       for(const [n,rows] of perLap){
         const first=Number(rows[0].timestamp);
-        const last=Number(rows.at(-1).timestamp);
-        const span=Math.max(averagePace,last-first,1);
+        const elapsed=Math.max(1,Number(rows.at(-1).timestamp)-first);
+        // A replay can be accelerated. Use the observed lap duration when
+        // there are multiple snapshots, rather than an arbitrary wall clock.
+        const span=rows.length>1?elapsed:averagePace;
         for(const sample of rows){
-          const x=Math.max(1,n-1+Math.min(.999,Math.max(0,(Number(sample.timestamp)-first)/span)));
+          const x=Math.max(1,n-1+Math.min(.999,(Number(sample.timestamp)-first)/span));
           for(const raw of sample.drivers||[]){
             const id=String(raw.id);
-            const gap=gapOf({...raw,racing_number:id});
+            const gap=gapOf(raw);
             if(gap===null)continue;
             if(!restored.has(id))restored.set(id,[]);
             restored.get(id).push({lap:x,y:at(x)-gap,estimated:true,gap});
@@ -422,34 +423,29 @@ class F1RaceTrace extends HTMLElement {
       if(!this.gapClock||lap!==this.gapClock.lap)this.gapClock={lap,start:now};
       const fraction=Math.min(.999,Math.max(0,(now-this.gapClock.start)/1000/Math.max(1,averagePace)));
       const liveX=Math.max(1,lap-1+fraction);
-      // The live leader is always included, even without lap history.
       if(leaderId&&!traces.some(d=>d.id===leaderId)){
         const source=drivers.find(d=>d.id===leaderId);
         if(source)traces.unshift({...source,points:[]});
       }
       for(const d of traces){
-        let state=this.gapTraceHistory.get(d.id);
-        if(!state){
-          const history=restored.get(d.id)||[];
-          const seed=history.length?history:d.points.filter(p=>p.lap<liveX-.005).map(p=>({...p}));
-          state={points:seed,lastGap:null};
-          this.gapTraceHistory.set(d.id,state);
-        }else{
-          // Recorder may have accumulated observations while this card was closed.
-          const history=restored.get(d.id)||[];
-          const last=state.points.at(-1)?.lap??-Infinity;
-          for(const p of history)if(p.lap>last+.0001)state.points.push(p);
-        }
+        const points=restored.get(d.id)||[];
         const gap=gapOf(rawById.get(d.id));
+        // Never splice a reconstructed lap series onto a sampled gap series:
+        // they have different reference origins and caused the field-wide step.
         if(gap!==null){
-          const last=state.points.at(-1);
-          const target=at(liveX)-gap;
-          if(!last||liveX>last.lap+.0001)state.points.push({lap:liveX,y:target,estimated:true,gap});
-          else if(Math.abs(last.lap-liveX)<.0001)state.points[state.points.length-1]={lap:liveX,y:target,estimated:true,gap};
-          state.lastGap=gap;
+          const last=points.at(-1);
+          if(!last||liveX>last.lap+.0001)
+            points.push({lap:liveX,y:at(liveX)-gap,estimated:true,gap});
         }
-        if(state.points.length>5000)state.points.splice(0,state.points.length-5000);
-        d.points=state.points.filter(p=>p.lap<=lap).sort((a,b)=>a.lap-b.lap);
+        // Keep a monotonic X timeline. Same-X samples replace, not connect.
+        const ordered=points.filter(p=>Number.isFinite(p.lap)&&Number.isFinite(p.y))
+          .sort((a,b)=>a.lap-b.lap);
+        const unique=[];
+        for(const p of ordered){
+          if(unique.length&&Math.abs(unique.at(-1).lap-p.lap)<.0001)unique[unique.length-1]=p;
+          else unique.push(p);
+        }
+        d.points=unique;
       }
     }
     if(this.config.debug){
