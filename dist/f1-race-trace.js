@@ -512,10 +512,16 @@ class F1RaceTrace extends HTMLElement {
             const id=String(row.id);
             if(!rawHistory.has(id))rawHistory.set(id,[]);
             const completed=Number(row.completed_laps)||0;
-            const sectorLap=Number(row.sector_current_lap);
-            const sector=row.sector_state==="s1_done"?1:row.sector_state==="s2_done"?2:row.sector_state==="s3_done"?3:0;
-            const sectorProgress=Number.isFinite(sectorLap)&&sectorLap>0&&sector>0
-              ?sectorLap-1+sectorBoundary[sector]:completed;
+            // Each sector's own *_lap field identifies the lap it
+            // belongs to. sector_current_lap is only a display hint and
+            // can refer to a different timing event.
+            const events=[1,2,3].map(k=>{
+              const eventLap=Number(row["sector_"+k+"_lap"]);
+              const duration=this.seconds(row["sector_"+k]);
+              return Number.isInteger(eventLap)&&eventLap>0&&duration!==null
+                ?eventLap-1+sectorBoundary[k]:null;
+            }).filter(Number.isFinite);
+            const sectorProgress=events.length?Math.max(...events):completed;
             rawHistory.get(id).push({row,at,raceX,progress:Math.max(completed,sectorProgress)});
           }
         }
