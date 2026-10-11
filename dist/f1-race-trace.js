@@ -728,20 +728,11 @@ class F1RaceTrace extends HTMLElement {
           }
           if(gap===null)continue;
           const previous=history.at(-1);
-          // Keep the leader on the race-clock X axis. If a stale or
-          // temporarily absent leader marker arrives, the fallback must
-          // not shift their whole trace a lap behind.
-          // During the opening lap, gaps change rapidly as the field spreads
-          // out from the grid. Subtracting those gaps from X and then
-          // enforcing monotonic X pins many points to the same coordinate,
-          // creating artificial vertical bars. Plot lap-one gaps against
-          // the shared race clock; retain normal offset geometry afterwards.
-          // A discontinuous switch from race-clock X to gap-offset X at
-          // lap two makes trailing cars jump backwards. The monotonic-X
-          // clamp then pins them in place, creating vertical drops and
-          // long horizontal shelves. Keep a continuous race-clock X for
-          // the entire recording; the Y coordinate already carries gap.
-          const driverX=advanceX(previous,obs.raceX);
+          // Apply the gap-derived spatial offset from the very first
+          // observation. Switching from race-clock X at lap two caused
+          // the earlier staircase artefact. Keep X monotonic to avoid
+          // backwards movement on timing corrections.
+          const driverX=advanceX(previous,plottedX(obs.raceX,gap));
           history.push({lap:driverX,raceLap:obs.raceX,gap,at:obs.at});
         }
         byId.set(id,history);
@@ -794,10 +785,8 @@ class F1RaceTrace extends HTMLElement {
         if(gap!==null&&!recorderFresh){
           const raceX=recorderX??liveX;
           const previous=points.at(-1);
-          // Use the same race-clock X as the persisted samples. Applying
-          // a gap offset only to the live fallback produces discontinuous
-          // jumps, especially for cars with stale retirement timing.
-          const x=advanceX(previous,raceX);
+          // Match the spatial X mapping used for persisted observations.
+          const x=advanceX(previous,plottedX(raceX,gap));
           // Retain stationary samples; they produce genuine vertical traces.
           if(!previous||Math.abs(previous.raceLap-raceX)>.00001||Math.abs(previous.gap-gap)>.0001)
             points.push({lap:x,y:baselineAt(raceX)-gap,gap,raceLap:raceX,live:true,estimated:true});
