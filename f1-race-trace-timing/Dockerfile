@@ -11,4 +11,6 @@ RUN apk add --no-cache python3 py3-pip py3-pandas py3-numpy py3-scipy \
     /opt/venv/bin/pip install --no-cache-dir --prefer-binary 'fastf1>=3.4,<4'
 
 COPY run.py /run.py
-CMD ["/opt/venv/bin/python", "/run.py"]
+COPY recorder.py /recorder.py
+COPY start.py /start.py
+CMD ["/opt/venv/bin/python", "/start.py"]
