@@ -289,7 +289,7 @@ class F1RaceTrace extends HTMLElement {
     let grid="";
     for(let i=0;i<=8;i++){const v=low+(high-low)*i/8;grid+=`<line x1="${L}" y1="${y(v)}" x2="${W-R}" y2="${y(v)}" stroke="#263245"/><text x="${L-9}" y="${y(v)+5}" text-anchor="end" fill="#93a4b9" font-size="17">${v.toFixed(1)}s</text>`;}
     for(let n=1;n<=chartEnd;n+=Math.max(1,Math.ceil(chartEnd/14)))grid+=`<line x1="${x(n)}" y1="${T}" x2="${x(n)}" y2="${H-B}" stroke="#202b39"/><text x="${x(n)}" y="${H-20}" text-anchor="middle" fill="#93a4b9" font-size="17">${n}</text>`;
-    const lines=traces.map(d=>{
+    const lines=traces.filter(d=>d.points.length>0).map(d=>{
       const path=d.points.map(p=>`${x(p.lap).toFixed(1)},${y(p.y).toFixed(1)}`).join(" ");
       const last=d.points.at(-1);
       const pitDots=d.points.filter(p=>p.pit).map(p=>`<rect x="${x(p.lap)-5}" y="${y(p.y)-5}" width="10" height="10" fill="#0b121d" stroke="${d.color}" stroke-width="2"/>`).join("");
