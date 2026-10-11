@@ -420,7 +420,7 @@ class F1RaceTrace extends HTMLElement {
           if(row.tla)entry.tla=row.tla;
           const gapText=String(row.gap??"").trim();
           const numericGap=/^LAP\s+\d+$/i.test(gapText)?0:this.seconds(gapText);
-          if(numericGap!==null||/^\+?\s*(\d+)\s+LAPS?$/i.test(gapText))entry.hasGap=true;
+          if(numericGap!==null||/^\+?\s*(\d+)\s+L(?:AP(?:S)?)?$/i.test(gapText))entry.hasGap=true;
           recordedDrivers.set(id,entry);
         }
       // The saved recording, not the current sensor's driver list, defines
@@ -495,7 +495,7 @@ class F1RaceTrace extends HTMLElement {
             // "LAP 17" is the leader's lap marker; "1 LAP" is a
             // lapped driver's gap and must never be treated as zero.
             const leaderMarker=/^LAP\s+\d+$/i.test(gapText);
-            const lapDeficit=gapText.match(/^\+?\s*(\d+)\s+LAPS?$/i);
+            const lapDeficit=gapText.match(/^\+?\s*(\d+)\s+L(?:AP(?:S)?)?$/i);
             let gap=leaderMarker?0:this.seconds(gapText);
             if(lapDeficit){
               const minimum=Number(lapDeficit[1])*averagePace;
@@ -547,7 +547,7 @@ class F1RaceTrace extends HTMLElement {
         const raw=rawById.get(d.id);
         const rawGapText=String(raw?.gap_to_leader??"").trim();
         const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(rawGapText);
-        const lapDeficit=rawGapText.match(/^\+?\s*(\d+)\s+LAPS?$/i);
+        const lapDeficit=rawGapText.match(/^\+?\s*(\d+)\s+L(?:AP(?:S)?)?$/i);
         let gap=isLeader?0:this.seconds(raw?.gap_to_leader);
         if(lapDeficit){
           const minimum=Number(lapDeficit[1])*averagePace;
