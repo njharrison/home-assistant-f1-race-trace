@@ -794,8 +794,10 @@ class F1RaceTrace extends HTMLElement {
         if(gap!==null&&!recorderFresh){
           const raceX=recorderX??liveX;
           const previous=points.at(-1);
-          const rawX=plottedX(raceX,gap);
-          const x=advanceX(previous,rawX);
+          // Use the same race-clock X as the persisted samples. Applying
+          // a gap offset only to the live fallback produces discontinuous
+          // jumps, especially for cars with stale retirement timing.
+          const x=advanceX(previous,raceX);
           // Retain stationary samples; they produce genuine vertical traces.
           if(!previous||Math.abs(previous.raceLap-raceX)>.00001||Math.abs(previous.gap-gap)>.0001)
             points.push({lap:x,y:baselineAt(raceX)-gap,gap,raceLap:raceX,live:true,estimated:true});
