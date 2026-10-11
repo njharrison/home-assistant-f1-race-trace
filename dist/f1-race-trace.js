@@ -453,8 +453,14 @@ class F1RaceTrace extends HTMLElement {
           const x=observation.lap;
           const y=baselineAt(x)-observation.gap;
           const last=restored.at(-1);
-          if(last&&Math.abs(last.lap-x)<.00001)restored[restored.length-1]={lap:x,y,estimated:true};
-          else if(!last||x>last.lap)restored.push({lap:x,y,estimated:true});
+          // A sudden, sustained loss of roughly a pit-stop duration is a
+          // real event, not a timing discontinuity to hide. Keep its drop.
+          const previousObservation=observations[observations.indexOf(observation)-1];
+          const pitDrop=previousObservation&&observation.at-previousObservation.at<6
+            &&observation.gap-previousObservation.gap>8;
+          const point={lap:x,y,estimated:true,pitDrop:!!pitDrop};
+          if(last&&Math.abs(last.lap-x)<.00001)restored[restored.length-1]=point;
+          else if(!last||x>last.lap)restored.push(point);
         }
         const raw=rawById.get(d.id);
         const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(String(raw?.gap_to_leader??"").trim());
@@ -513,7 +519,7 @@ class F1RaceTrace extends HTMLElement {
       let segment=[];
       for(const p of d.points){
         const prev=segment.at(-1);
-        if(prev&&(p.lap-prev.lap<0.025&&Math.abs(p.y-prev.y)>1.5)){
+        if(prev&&!p.pitDrop&&(p.lap-prev.lap<0.025&&Math.abs(p.y-prev.y)>1.5)){
           if(segment.length)segments.push(segment);
           segment=[];
         }
