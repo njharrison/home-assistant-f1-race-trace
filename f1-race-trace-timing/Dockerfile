@@ -13,4 +13,4 @@ RUN apk add --no-cache python3 py3-pip py3-pandas py3-numpy py3-scipy \
 COPY run.py /run.py
 COPY recorder.py /recorder.py
 COPY start.py /start.py
-CMD ["/opt/venv/bin/python", "/start.py"]
+CMD ["/usr/bin/with-contenv", "/opt/venv/bin/python", "/start.py"]
