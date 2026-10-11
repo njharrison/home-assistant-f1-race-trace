@@ -414,15 +414,24 @@ class F1RaceTrace extends HTMLElement {
       for(const rows of byLap.values())for(const sample of rows)
         for(const row of sample.drivers||[]){
           const id=String(row.id??"");
-          if(id&&row.tla)recordedDrivers.set(id,row);
+          if(!id)continue;
+          const entry=recordedDrivers.get(id)||{id,tla:row.tla,hasGap:false};
+          if(row.tla)entry.tla=row.tla;
+          const numericGap=/^LAP\s+\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
+          if(numericGap!==null)entry.hasGap=true;
+          recordedDrivers.set(id,entry);
         }
+      // The saved recording, not the current sensor's driver list, defines
+      // who belongs on a historical race trace.
       for(const [id,row] of recordedDrivers){
-        if(this.hiddenDrivers.has(id)||traces.some(d=>d.id===id))continue;
+        if(this.hiddenDrivers.has(id)||!row.hasGap)continue;
+        if(traces.some(d=>d.id===id))continue;
         const previous=this.gapTraceHistory.get(id);
         const source=drivers.find(d=>d.id===id);
-        const teamColor=source?.color||previous?.color||"#9faec2";
-        traces.push({id,label:row.tla,color:teamColor,position:row.position,
-          retired:true,points:[]});
+        traces.push({id,label:row.tla||source?.label||id,
+          color:source?.color||previous?.color||"#9faec2",
+          position:source?.position,retired:!liveDrivers.some(d=>String(d.racing_number||d.tla)===id),
+          points:[]});
       }
       const lapsSorted=[...byLap.keys()].sort((a,b)=>a-b);
       // Race-wide lap transition timestamps form a single replay clock.
@@ -489,6 +498,14 @@ class F1RaceTrace extends HTMLElement {
             history.push({lap:driverX,raceLap:x,gap,at:sample.timestamp});
           }
         }
+      }
+      if(this.config.debug){
+        const bor=[...recordedDrivers.values()].filter(d=>d.tla==="BOR");
+        console.info("[F1 Race Trace] Retired-driver reconstruction",bor.map(d=>({
+          id:d.id,hasNumericGap:d.hasGap,recordedPoints:byId.get(d.id)?.length||0,
+          includedInTraces:traces.some(t=>t.id===d.id),
+          hidden:this.hiddenDrivers.has(d.id)
+        })));
       }
       // The recorder is the authoritative live clock. Derive the current
       // position from its latest observation, not a separate render timer.
