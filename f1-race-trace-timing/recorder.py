@@ -13,6 +13,7 @@ import requests
 
 LOG = logging.getLogger("f1-race-trace-recorder")
 OUTPUT = Path("/config/www/f1-race-trace/live-recording.json")
+DELTA_OUTPUT = OUTPUT.with_name("live-recording-delta.json")
 API = "http://supervisor/core/api/states/"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 
@@ -44,6 +45,8 @@ def record(options):
     last_lap = None
     last_signature = None
     last_write = 0
+    # Keep a rolling window, not just the last batch: a browser can miss polls.
+    delta_window_seconds = 90
     LOG.info("Recording %s and %s to %s", driver_entity, lap_entity, OUTPUT)
     while True:
         try:
@@ -111,6 +114,21 @@ def record(options):
                 last_signature = signature
             if now - last_write >= 2:
                 write_atomic(OUTPUT, recording)
+                samples = recording["samples"]
+                events = recording["race_control"]
+                sample_start = next((i for i, row in enumerate(samples)
+                                     if row["timestamp"] >= now - delta_window_seconds),
+                                    len(samples))
+                event_start = next((i for i, row in enumerate(events)
+                                    if row["observed_at"] >= now - delta_window_seconds),
+                                   len(events))
+                write_atomic(DELTA_OUTPUT, {
+                    "schema_version": 1, "run": recording["run"],
+                    "sample_start": sample_start, "sample_count": len(samples),
+                    "samples": samples[sample_start:],
+                    "event_start": event_start, "event_count": len(events),
+                    "race_control": events[event_start:],
+                })
                 last_write = now
         except (requests.RequestException, ValueError, TypeError, OSError) as exc:
             LOG.warning("Live recorder retrying: %s", exc)
