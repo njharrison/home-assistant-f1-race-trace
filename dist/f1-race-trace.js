@@ -24,6 +24,15 @@ class F1RaceTrace extends HTMLElement {
     this.persistedRecording = null;
     this.recordingFetchAt = 0;
     this.recordingRun = null;
+    this.recordingTimer = null;
+    this.recordingLoading = false;
+  }
+  connectedCallback(){
+    if(!this.recordingTimer)this.recordingTimer=setInterval(()=>this.loadRecording(),1000);
+  }
+  disconnectedCallback(){
+    if(this.recordingTimer)clearInterval(this.recordingTimer);
+    this.recordingTimer=null;
   }
   setConfig(config) {
     this.config = {entity:"sensor.f1_drivers_driver_positions",lap_entity:"sensor.f1_race_lap_count",height:"85vh",archive_url:null,...config};
@@ -52,8 +61,9 @@ class F1RaceTrace extends HTMLElement {
   async loadRecording(){
     if(this.config.recording_url===false||this.config.timing_engine==="legacy")return;
     const now=Date.now();
-    if(now-this.recordingFetchAt<1000)return;
+    if(this.recordingLoading||now-this.recordingFetchAt<900)return;
     this.recordingFetchAt=now;
+    this.recordingLoading=true;
     try{
       const response=await fetch(this.config.recording_url||"/local/f1-race-trace/live-recording.json",{cache:"no-store"});
       if(!response.ok)return;
@@ -68,6 +78,7 @@ class F1RaceTrace extends HTMLElement {
       this.persistedRecording=data;
       this.render();
     }catch(err){if(this.config.debug)console.warn("[F1 Race Trace] Recording unavailable",err);}
+    finally{this.recordingLoading=false;}
   }
   getCardSize(){return 12;}
   static getStubConfig(){return {type:"custom:f1-race-trace"};}
