@@ -199,7 +199,7 @@ class F1RaceTrace extends HTMLElement {
         for(let sector=1;sector<=3;sector++){
           const n=Number(raw["sector_"+sector+"_lap"]);
           const duration=this.seconds(raw["sector_"+sector]);
-          if(!Number.isInteger(n)||n<1||n>lap||duration===null)continue;
+          if(!Number.isInteger(n)||n<1||n>lap||duration===null||n<=Number(raw.completed_laps||0))continue;
           const key=n+":"+sector;
           if(history.has(key))continue;
           // Use the driver's last known completed-lap trace as a fixed
@@ -243,7 +243,7 @@ class F1RaceTrace extends HTMLElement {
         const merged=new Map();
         for(const p of history.values())if(Number.isFinite(p.lap))merged.set(p.lap.toFixed(6),p);
         for(const p of this.sectorHistory.get(d.id)?.values()||[])
-          if(Number.isFinite(p.lap))merged.set(p.lap.toFixed(6),p);
+          if(Number.isFinite(p.lap)&&p.lap>Number(liveDrivers.find(raw=>String(raw.racing_number||raw.tla)===d.id)?.completed_laps||0))merged.set(p.lap.toFixed(6),p);
         d.points=[...merged.values()].filter(p=>p.lap<=lap).sort((a,b)=>a.lap-b.lap);
       }
     }
@@ -259,7 +259,7 @@ class F1RaceTrace extends HTMLElement {
         const gap=Number(raw.current_position)===1?0:this.seconds(raw.gap_to_leader);
         if(gap===null)continue;
         const currentLap=Number(raw.sector_current_lap)||Number(raw.completed_laps)+1;
-        if(!Number.isInteger(currentLap)||currentLap<1)continue;
+        if(!Number.isInteger(currentLap)||currentLap<1||raw.sector_state==="lap_complete"||currentLap<=Number(raw.completed_laps||0))continue;
         const done=raw.sector_state==="s3_done"?3:raw.sector_state==="s2_done"?2:raw.sector_state==="s1_done"?1:0;
         const nextSector=Math.min(3,done+1);
         const stage=currentLap+":"+done;
@@ -286,7 +286,7 @@ class F1RaceTrace extends HTMLElement {
           state.samples.push({lap:x,y,estimated:true});
           if(state.samples.length>180)state.samples.shift();
         }
-        d.points.push(...state.samples.filter(p=>p.lap>anchorX&&p.lap<anchorX+1/3));
+        d.points.push(...state.samples.filter(p=>p.lap>Math.max(anchorX,Number(raw.completed_laps||0))&&p.lap<anchorX+1/3));
         const unique=new Map();
         for(const p of d.points)if(Number.isFinite(p.lap)&&Number.isFinite(p.y))unique.set(p.lap.toFixed(6),p);
         d.points=[...unique.values()].sort((a,b)=>a.lap-b.lap);
