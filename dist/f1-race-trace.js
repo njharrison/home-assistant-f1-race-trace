@@ -24,13 +24,14 @@ class F1RaceTrace extends HTMLElement {
     this.persistedRecording = null;
     this.recordingFetchAt = 0;
     this.recordingRun = null;
+    this.recordingSignature = null;
     this.recordingTimer = null;
     this.recordingLoading = false;
     this.xWindow = null;
     this.yWindow = null;
   }
   connectedCallback(){
-    if(!this.recordingTimer)this.recordingTimer=setInterval(()=>this.loadRecording(),1000);
+    if(!this.recordingTimer)this.recordingTimer=setInterval(()=>this.loadRecording(),5000);
   }
   disconnectedCallback(){
     if(this.recordingTimer)clearInterval(this.recordingTimer);
@@ -50,6 +51,7 @@ class F1RaceTrace extends HTMLElement {
     this.persistedRecording=null;
     this.recordingFetchAt=0;
     this.recordingRun=null;
+    this.recordingSignature=null;
     this.xWindow=null;
     this.yWindow=null;
     this.loadArchive();
@@ -65,7 +67,7 @@ class F1RaceTrace extends HTMLElement {
   async loadRecording(){
     if(this.config.recording_url===false||this.config.timing_engine==="legacy")return;
     const now=Date.now();
-    if(this.recordingLoading||now-this.recordingFetchAt<900)return;
+    if(this.recordingLoading||now-this.recordingFetchAt<4500)return;
     this.recordingFetchAt=now;
     this.recordingLoading=true;
     try{
@@ -73,6 +75,12 @@ class F1RaceTrace extends HTMLElement {
       if(!response.ok)return;
       const data=await response.json();
       if(data.schema_version!==1||!Array.isArray(data.samples))return;
+      const tail=data.samples.at(-1);
+      const events=data.race_control||[];
+      const signature=JSON.stringify([data.run,data.samples.length,
+        tail?.timestamp,tail?.lap,events.length,events.at(-1)?.event_id]);
+      if(signature===this.recordingSignature)return;
+      this.recordingSignature=signature;
       if(this.recordingRun!==null&&this.recordingRun!==data.run){
         this.gapTraceHistory.clear();
         this.gapClock=null;
@@ -473,15 +481,20 @@ class F1RaceTrace extends HTMLElement {
       // intra-lap detail and the average-pace reference. A baseline built
       // from a different lap-time source causes a repeated sawtooth.
       // Ignore lap 1: this recording begins before its actual start.
+      // Prefix sums avoid summing every earlier lap for every plotted point.
+      // With thousands of samples the previous loop was quadratic in laps.
+      const deviationByLap=new Map([[1,0]]);
+      let cumulativeDeviation=0;
+      for(let n=2;n<=lap+1;n++){
+        const t0=startByLap.get(n),t1=startByLap.get(n+1);
+        if(t0!==undefined&&t1!==undefined&&t1>t0)
+          cumulativeDeviation+=averagePace-(t1-t0);
+        deviationByLap.set(n,cumulativeDeviation);
+      }
       const baselineAt=x=>{
         const whole=Math.max(1,Math.floor(x));
         const fraction=Math.max(0,Math.min(1,x-whole));
-        let value=0;
-        for(let n=2;n<=whole;n++){
-          const t0=startByLap.get(n),t1=startByLap.get(n+1);
-          if(t0!==undefined&&t1!==undefined&&t1>t0)
-            value+=averagePace-(t1-t0);
-        }
+        const value=deviationByLap.get(Math.min(whole,lap+1))??0;
         const t0=startByLap.get(whole+1),t1=startByLap.get(whole+2);
         // The current lap has no end timestamp yet. Carry forward the
         // previous completed leader/race-clock lap's pace if plausible,
@@ -803,7 +816,25 @@ class F1RaceTrace extends HTMLElement {
       // The dotted copy represents the same car one reference lap ahead:
       // shift BOTH its circuit position (X) and its time offset (Y).
       // Draw it independently, so no vertical wrap connector is introduced.
-      const points=d.points;
+      // Simplify only the SVG geometry. Preserve raw timing points,
+      // local extrema, and any sharp pit-stop transitions.
+      const rawPoints=d.points;
+      const points=[];
+      const toleranceX=Math.max(.002,(viewEnd-viewStart)/(W-L-R)*.6);
+      const toleranceY=Math.max(.15,(high-low)/(H-T-B)*.6);
+      for(let i=0;i<rawPoints.length;i++){
+        const p=rawPoints[i];
+        const prev=points.at(-1);
+        const next=rawPoints[i+1];
+        if(prev&&next&&!p.pit&&Number.isFinite(p.lap)&&Number.isFinite(p.y)){
+          const dx=next.lap-prev.lap;
+          const expected=dx>0?prev.y+(next.y-prev.y)*(p.lap-prev.lap)/dx:prev.y;
+          if(p.lap-prev.lap<toleranceX&&Math.abs(p.y-expected)<toleranceY
+            &&Math.abs(p.y-prev.y)<toleranceY&&Math.abs(next.y-p.y)<toleranceY)
+            continue;
+        }
+        points.push(p);
+      }
       const coords=(lapOffset,timeOffset)=>points.map(p=>`${x(p.lap+lapOffset).toFixed(1)},${y(p.y+timeOffset).toFixed(1)}`).join(" ");
       const original=`<polyline points="${coords(0,0)}" fill="none" stroke="${d.color}" stroke-width="3.2" ${d.retired?'stroke-dasharray="7 6"':''}/>`;
       const duplicate=`<polyline points="${coords(1,averagePace)}" fill="none" stroke="${d.color}" stroke-width="2.5" stroke-dasharray="5 7" opacity=".8"/>`;
