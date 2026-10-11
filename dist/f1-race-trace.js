@@ -26,6 +26,7 @@ class F1RaceTrace extends HTMLElement {
     this.recordingRun = null;
     this.recordingTimer = null;
     this.recordingLoading = false;
+    this.xWindow = null;
   }
   connectedCallback(){
     if(!this.recordingTimer)this.recordingTimer=setInterval(()=>this.loadRecording(),1000);
@@ -48,6 +49,7 @@ class F1RaceTrace extends HTMLElement {
     this.persistedRecording=null;
     this.recordingFetchAt=0;
     this.recordingRun=null;
+    this.xWindow=null;
     this.loadArchive();
     this.render();
   }
@@ -532,11 +534,20 @@ class F1RaceTrace extends HTMLElement {
     else {this.fixedScale.low=Math.min(this.fixedScale.low,low);this.fixedScale.high=Math.max(this.fixedScale.high,high);}
     ({low,high}=this.fixedScale);
     const W=1400,H=720,L=78,R=110,T=40,B=60;
-    const x=n=>L+(Math.max(1,n)-1)/Math.max(1,chartEnd-1)*(W-L-R);
+    const fullStart=1,fullEnd=Math.max(2,chartEnd);
+    if(this.xWindow){
+      const width=Math.min(fullEnd-fullStart,Math.max(.35,this.xWindow.end-this.xWindow.start));
+      const start=Math.max(fullStart,Math.min(this.xWindow.start,fullEnd-width));
+      this.xWindow={start,end:start+width};
+    }
+    const viewStart=this.xWindow?.start??fullStart;
+    const viewEnd=this.xWindow?.end??fullEnd;
+    const x=n=>L+(n-viewStart)/Math.max(.001,viewEnd-viewStart)*(W-L-R);
     const y=n=>T+(high-n)/(high-low)*(H-T-B);
     let grid="";
     for(let i=0;i<=8;i++){const v=low+(high-low)*i/8;grid+=`<line x1="${L}" y1="${y(v)}" x2="${W-R}" y2="${y(v)}" stroke="#263245"/><text x="${L-9}" y="${y(v)+5}" text-anchor="end" fill="#93a4b9" font-size="17">${v.toFixed(1)}s</text>`;}
-    for(let n=1;n<=chartEnd;n+=Math.max(1,Math.ceil(chartEnd/14)))grid+=`<line x1="${x(n)}" y1="${T}" x2="${x(n)}" y2="${H-B}" stroke="#202b39"/><text x="${x(n)}" y="${H-20}" text-anchor="middle" fill="#93a4b9" font-size="17">${n}</text>`;
+    const tickStep=Math.max(1,Math.ceil((viewEnd-viewStart)/14));
+    for(let n=Math.max(1,Math.ceil(viewStart/tickStep)*tickStep);n<=viewEnd;n+=tickStep)grid+=`<line x1="${x(n)}" y1="${T}" x2="${x(n)}" y2="${H-B}" stroke="#202b39"/><text x="${x(n)}" y="${H-20}" text-anchor="middle" fill="#93a4b9" font-size="17">${n}</text>`;
     const lines=traces.filter(d=>d.points.length>0).map(d=>{
       // Split discontinuities rather than drawing artificial near-vertical
       // connections between estimates and timing-line observations.
@@ -563,17 +574,71 @@ class F1RaceTrace extends HTMLElement {
       .head{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:20px 24px;flex-wrap:wrap}
       .title{font-size:26px;font-weight:800;letter-spacing:.1em}.subtitle{font-size:12px;color:#91a2b8;margin-top:5px}
       select{background:#162333;color:#fff;border:1px solid #3b4b60;border-radius:6px;padding:9px}
-      .chart{height:${this.escape(this.config.height)};min-height:350px;position:relative}svg{width:100%;height:100%}
+      .chart{height:${this.escape(this.config.height)};min-height:350px;position:relative}svg{width:100%;height:100%;touch-action:none;cursor:grab}svg:active{cursor:grabbing}
+      .zoom-controls{display:flex;gap:6px;align-items:center}.zoom-controls button{min-width:36px}
       .legend{display:flex;gap:7px;flex-wrap:wrap;padding:10px 24px 18px}
       button{background:#101b2b;color:#eaf2fb;border:1px solid #26364a;padding:7px 10px;border-radius:5px;cursor:pointer}
       button.off{opacity:.35}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px}
       .note{font-size:12px;color:#9eacbd;padding:0 24px 18px}.empty{padding:40px}
     </style><ha-card>
-      <div class="head"><div><div class="title">RACE TRACE <span style="color:#ff8700">/ F1</span></div><div class="subtitle">LAP ${lap} · ${drivers.length} DRIVERS · ${traces.length} TRACES · ${archived?"ARCHIVE":"LIVE"}</div></div><label>REFERENCE <select id="reference">${opts.map(o=>`<option value="${this.escape(o.id)}" ${this.reference===o.id?"selected":""}>${this.escape(o.label)}</option>`).join("")}</select></label></div>
-      ${traces.length?`<div class="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><rect width="${W}" height="${H}" fill="#0b121d"/>${grid}<line x1="${L}" y1="${y(0)}" x2="${W-R}" y2="${y(0)}" stroke="#8393a6" stroke-dasharray="8 7"/>${lines}</svg></div>`:'<div class="empty">Waiting for replay driver timing data.</div>'}
+      <div class="head"><div><div class="title">RACE TRACE <span style="color:#ff8700">/ F1</span></div><div class="subtitle">LAP ${lap} · ${drivers.length} DRIVERS · ${traces.length} TRACES · ${archived?"ARCHIVE":"LIVE"}</div></div><div class="zoom-controls"><button id="zoom-in" title="Zoom in horizontally">+</button><button id="zoom-out" title="Zoom out horizontally">−</button><button id="zoom-reset" title="Show full race">Reset</button></div><label>REFERENCE <select id="reference">${opts.map(o=>`<option value="${this.escape(o.id)}" ${this.reference===o.id?"selected":""}>${this.escape(o.label)}</option>`).join("")}</select></label></div>
+      ${traces.length?`<div class="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><clipPath id="race-trace-plot"><rect x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}"/></clipPath></defs><rect width="${W}" height="${H}" fill="#0b121d"/>${grid}<g clip-path="url(#race-trace-plot)"><line x1="${L}" y1="${y(0)}" x2="${W-R}" y2="${y(0)}" stroke="#8393a6" stroke-dasharray="8 7"/>${lines}</g></svg></div>`:'<div class="empty">Waiting for replay driver timing data.</div>'}
       <div class="legend">${drivers.map(d=>`<button data-driver="${this.escape(d.id)}" class="${this.hiddenDrivers.has(d.id)?"off":""}"><span class="dot" style="background:${d.color}"></span>${this.escape(d.label)} · P${this.escape(d.position)}</button>`).join("")}</div>
       <div class="note">${archived?"Historical FastF1 lap-end timing. Gaps measured at the timing line, not simultaneous car positions; lapped cars are omitted when not comparable. Squares indicate pit-in laps.":"Live: shared race-clock gap traces; lap times seed historical data and do not snap live positions. "+(this.archiveError?"Archive unavailable: "+this.escape(this.archiveError):"Waiting for historical archive.")}</div>
     </ha-card>`;
+    const zoom=(factor,center=(viewStart+viewEnd)/2)=>{
+      const width=Math.max(.35,Math.min(fullEnd-fullStart,(viewEnd-viewStart)*factor));
+      const fraction=(center-viewStart)/Math.max(.001,viewEnd-viewStart);
+      const start=Math.max(fullStart,Math.min(fullEnd-width,center-fraction*width));
+      this.xWindow={start,end:start+width};
+      if(width>=fullEnd-fullStart-.001)this.xWindow=null;
+      this.render();
+    };
+    this.shadowRoot.getElementById("zoom-in")?.addEventListener("click",()=>zoom(.65));
+    this.shadowRoot.getElementById("zoom-out")?.addEventListener("click",()=>zoom(1/.65));
+    this.shadowRoot.getElementById("zoom-reset")?.addEventListener("click",()=>{this.xWindow=null;this.render();});
+    const svg=this.shadowRoot.querySelector(".chart svg");
+    if(svg){
+      const pointerX=e=>{
+        const rect=svg.getBoundingClientRect();
+        return Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width*W-L)/(W-L-R));
+      };
+      svg.addEventListener("wheel",e=>{
+        e.preventDefault();
+        zoom(e.deltaY>0?1.18:1/1.18,viewStart+pointerX(e)*(viewEnd-viewStart));
+      },{passive:false});
+      const pointers=new Map();
+      let previous=null;
+      svg.addEventListener("pointerdown",e=>{
+        pointers.set(e.pointerId,e.clientX);
+        svg.setPointerCapture(e.pointerId);
+        previous=null;
+      });
+      svg.addEventListener("pointermove",e=>{
+        if(!pointers.has(e.pointerId))return;
+        pointers.set(e.pointerId,e.clientX);
+        const positions=[...pointers.values()].sort((a,b)=>a-b);
+        const rect=svg.getBoundingClientRect();
+        const center=positions.reduce((a,b)=>a+b,0)/positions.length;
+        const distance=positions.length>1?positions.at(-1)-positions[0]:null;
+        if(previous){
+          const span=viewEnd-viewStart;
+          const dx=(center-previous.center)/rect.width*W/(W-L-R)*span;
+          let width=span;
+          if(distance!==null&&previous.distance!==null&&distance>4&&previous.distance>4)
+            width=Math.max(.35,Math.min(fullEnd-fullStart,span*previous.distance/distance));
+          const fraction=Math.max(0,Math.min(1,(center-rect.left)/rect.width*W-L)/(W-L-R));
+          const start=Math.max(fullStart,Math.min(fullEnd-width,viewStart-dx+(span-width)*fraction));
+          this.xWindow={start,end:start+width};
+          this.render();
+          return;
+        }
+        previous={center,distance};
+      });
+      const release=e=>{pointers.delete(e.pointerId);previous=null;};
+      svg.addEventListener("pointerup",release);
+      svg.addEventListener("pointercancel",release);
+    }
     this.shadowRoot.getElementById("reference")?.addEventListener("change",e=>{this.reference=e.target.value;this.render();});
     this.shadowRoot.querySelectorAll("[data-driver]").forEach(b=>b.addEventListener("click",()=>{const id=b.dataset.driver;this.hiddenDrivers.has(id)?this.hiddenDrivers.delete(id):this.hiddenDrivers.add(id);this.render();}));
   }
