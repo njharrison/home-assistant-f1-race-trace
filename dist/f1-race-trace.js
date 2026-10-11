@@ -717,8 +717,8 @@ class F1RaceTrace extends HTMLElement {
         recordedCount:recorded.length,
         recordedFirst:recorded[0],recordedLast:recorded.at(-1),
         plottedCount:pts.length,
-        xRange:xs.length?[Math.min(...xs),Math.max(...xs)]:null,
-        yRange:ys.length?[Math.min(...ys),Math.max(...ys)]:null,
+        xRange:xs.length?xs.reduce((range,v)=>[Math.min(range[0],v),Math.max(range[1],v)],[Infinity,-Infinity]):null,
+        yRange:ys.length?ys.reduce((range,v)=>[Math.min(range[0],v),Math.max(range[1],v)],[Infinity,-Infinity]):null,
         insideWindow:pts.filter(p=>p.lap>=viewStart&&p.lap<=viewEnd&&p.y>=low&&p.y<=high).length,
         firstPoints:pts.slice(0,3),lastPoints:pts.slice(-3),
         hidden:ver?this.hiddenDrivers.has(ver.id):null
