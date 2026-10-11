@@ -48,7 +48,17 @@ class F1RaceTrace extends HTMLElement {
   }
   escape(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
   data(drivers){
-    const sorted=[...drivers].sort((a,b)=>Number(a.current_position||999)-Number(b.current_position||999));
+    // Some F1 Sensor updates omit current_position for the front runners.
+    // A "LAP N" gap identifies the leader; numeric gaps rank everyone else.
+    const rank=d=>{
+      const gap=String(d.gap_to_leader??"").trim();
+      if(/^LAP\s+\d+$/i.test(gap))return 0;
+      const seconds=this.seconds(gap);
+      if(seconds!==null)return seconds;
+      const position=Number(d.current_position);
+      return Number.isFinite(position)&&position>0?1e6+position:Infinity;
+    };
+    const sorted=[...drivers].sort((a,b)=>rank(a)-rank(b));
     const leader=sorted[0];
     if(!leader)return [];
     const laps=d=>new Map(Object.entries(d.laps||{}).map(([k,v])=>[Number(k),this.seconds(v)]).filter(([k,v])=>Number.isFinite(k)&&v!==null));
