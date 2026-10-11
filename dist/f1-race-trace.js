@@ -444,34 +444,12 @@ class F1RaceTrace extends HTMLElement {
       };
       // Position the observation by its driver's own sector progress before
       // subtracting its gap expressed as a fraction of a reference lap.
-      const sectorFloor=(raw,raceX)=>{
-        const state=String(raw?.sector_state??"").toLowerCase();
-        const current=Number(raw?.sector_current_lap);
-        const completed=Number(raw?.completed_laps);
-        // Ignore sector data carried over from a previous lap.
-        const expectedLap=Math.floor(raceX)+1;
-        if(!Number.isFinite(current)||current!==expectedLap)return 0;
-        if(state==="s2_done"||state==="s3_running"||
-           (raw?.sector_2!=null&&Number(raw?.sector_2_lap)===current))return 2/3;
-        if(state==="s1_done"||state==="s2_running"||
-           (raw?.sector_1!=null&&Number(raw?.sector_1_lap)===current))return 1/3;
-        return 0;
-      };
-      const plottedX=(raceX,gap,raw)=>Math.max(
-        raceX-Math.max(0,gap)/averagePace,
-        Math.floor(raceX)+sectorFloor(raw,raceX)-Math.max(0,gap)/averagePace
-      );
-      // Low-pass the *position* (never the gap/Y) and cap instantaneous
-      // forward motion. This removes gap-telemetry jitter without hiding
-      // real vertical timing losses. At a stop, target X stops advancing.
-      const advanceX=(previous,target,elapsed)=>{
-        if(!previous)return target;
-        const dt=Math.max(.001,Math.min(10,elapsed));
-        const alpha=1-Math.exp(-dt/3);
-        const smoothed=previous.lap+alpha*(target-previous.lap);
-        const maxAdvance=2.5*dt/Math.max(1,replayLapDuration);
-        return Math.max(previous.lap,Math.min(previous.lap+maxAdvance,smoothed));
-      };
+      // Recorded sector states are snapshots of the last timing event,
+      // NOT continuous progress. Applying them as an X floor on every
+      // observation creates long horizontal shelves and abrupt jumps.
+      // Use the shared race clock and gap alone for historical positions.
+      const plottedX=(raceX,gap)=>raceX-Math.max(0,gap)/averagePace;
+      const advanceX=(previous,target)=>previous?Math.max(previous.lap,target):target;
       for(const n of lapsSorted){
         const rows=byLap.get(n);
         const first=startByLap.get(n);
@@ -490,8 +468,8 @@ class F1RaceTrace extends HTMLElement {
             const previous=history.at(-1);
             // A gap increase can slow or stop the driver, but must not
             // reverse their progress. Preserve identical X for verticals.
-            const rawX=plottedX(x,gap,row);
-            const driverX=advanceX(previous,rawX,previous?Number(sample.timestamp)-previous.at:0);
+            const rawX=plottedX(x,gap);
+            const driverX=advanceX(previous,rawX);
             history.push({lap:driverX,raceLap:x,gap,at:sample.timestamp});
           }
         }
@@ -529,8 +507,8 @@ class F1RaceTrace extends HTMLElement {
         if(gap!==null&&!recorderFresh){
           const raceX=recorderX??liveX;
           const previous=points.at(-1);
-          const rawX=plottedX(raceX,gap,raw);
-          const x=advanceX(previous,rawX,previous?Math.max(.001,(raceX-(previous.raceLap??raceX))*replayLapDuration):0);
+          const rawX=plottedX(raceX,gap);
+          const x=advanceX(previous,rawX);
           // Retain stationary samples; they produce genuine vertical traces.
           if(!previous||Math.abs(previous.raceLap-raceX)>.00001||Math.abs(previous.gap-gap)>.0001)
             points.push({lap:x,y:baselineAt(raceX)-gap,gap,raceLap:raceX,live:true,estimated:true});
