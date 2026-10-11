@@ -684,7 +684,7 @@ class F1RaceTrace extends HTMLElement {
     }
     for(const d of traces)d.points=d.points.filter(p=>Number.isFinite(p.y));
     // Include the lap-ahead dotted copies in the horizontal domain.
-    const chartLap=Math.max(lap,...traces.flatMap(d=>d.points.flatMap(p=>[p.lap,p.lap+1])).filter(Number.isFinite),1);
+    const chartLap=traces.reduce((max,d)=>d.points.reduce((m,p)=>Number.isFinite(p.lap)?Math.max(m,p.lap+1):m,max),Math.max(1,lap));
     const chartEnd=Math.max(lap+0.35,chartLap+0.1);
     // A fixed, symmetrical window spanning exactly one reference lap.
     // Keep out-of-range data intact; the SVG plot clip hides it until
