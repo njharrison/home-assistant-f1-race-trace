@@ -477,6 +477,26 @@ class F1RaceTrace extends HTMLElement {
       // Use the shared race clock and gap alone for historical positions.
       const plottedX=(raceX,gap)=>raceX-Math.max(0,gap)/averagePace;
       const advanceX=(previous,target)=>previous?Math.max(previous.lap,target):target;
+      // Derive reference sector fractions from measured sector durations,
+      // rather than assuming that each sector takes exactly a third of a lap.
+      const sectorDurations=[[],[],[]];
+      for(const rows of byLap.values())for(const sample of rows)
+        for(const row of sample.drivers||[])for(let k=1;k<=3;k++){
+          const duration=this.seconds(row["sector_"+k]);
+          if(duration!==null&&duration>10&&duration<90)
+            sectorDurations[k-1].push(duration);
+        }
+      const median=values=>{
+        const sorted=values.sort((a,b)=>a-b);
+        return sorted.length?sorted[Math.floor(sorted.length/2)]:null;
+      };
+      const sectorMedians=sectorDurations.map(median);
+      const sectorTotal=sectorMedians.every(Number.isFinite)
+        ?sectorMedians.reduce((a,b)=>a+b,0):0;
+      const sectorFractions=sectorTotal>0
+        ?sectorMedians.map(v=>v/sectorTotal):[1/3,1/3,1/3];
+      const sectorBoundary=[0,sectorFractions[0],
+        sectorFractions[0]+sectorFractions[1],1];
       // Collect all observations before reconstruction so sector transitions
       // can be interpolated using the actual recorded timestamps.
       const rawHistory=new Map();
@@ -495,7 +515,7 @@ class F1RaceTrace extends HTMLElement {
             const sectorLap=Number(row.sector_current_lap);
             const sector=row.sector_state==="s1_done"?1:row.sector_state==="s2_done"?2:row.sector_state==="s3_done"?3:0;
             const sectorProgress=Number.isFinite(sectorLap)&&sectorLap>0&&sector>0
-              ?sectorLap-1+sector/3:completed;
+              ?sectorLap-1+sectorBoundary[sector]:completed;
             rawHistory.get(id).push({row,at,raceX,progress:Math.max(completed,sectorProgress)});
           }
         }
@@ -523,9 +543,11 @@ class F1RaceTrace extends HTMLElement {
             const fraction=Math.max(0,Math.min(1,(obs.at-before.at)/(after.at-before.at)));
             progress=before.progress+(after.progress-before.progress)*fraction;
           }else if(before){
-            // A last sector with no subsequent timing event is incomplete:
-            // never extrapolate more than one sector.
-            progress=before.progress+Math.min(1/3,Math.max(0,obs.at-before.at)/Math.max(1,averagePace)*1.0);
+            // Until another sector event arrives, extrapolate at reference
+            // pace, capped at the next sector boundary.
+            const nextBoundary=sectorBoundary.find(v=>v>before.progress%1+1e-5);
+            const limit=nextBoundary===undefined?Math.floor(before.progress)+1:Math.floor(before.progress)+nextBoundary;
+            progress=Math.min(limit,before.progress+Math.max(0,obs.at-before.at)/Math.max(1,averagePace));
           }
           const gapText=String(obs.row.gap??"").trim();
           const leaderMarker=/^LAP\s+\d+$/i.test(gapText);
