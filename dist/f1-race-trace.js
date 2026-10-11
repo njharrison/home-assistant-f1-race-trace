@@ -580,8 +580,8 @@ class F1RaceTrace extends HTMLElement {
             progress=after.progress-Math.max(0,after.at-obs.at)/Math.max(1,averagePace);
           }
           const gapText=String(obs.row.gap??"").trim();
-          const leaderMarker=/^LAP\\s+\\d+$/i.test(gapText);
-          const lapDeficit=gapText.match(/^\\+?\\s*(\\d+)\\s+L(?:AP(?:S)?)?$/i);
+          const leaderMarker=/^LAP\s+\d+$/i.test(gapText);
+          const lapDeficit=gapText.match(/^\+?\s*(\d+)\s+L(?:AP(?:S)?)?$/i);
           const measuredGap=leaderMarker?0:this.seconds(gapText);
           let gap=measuredGap;
           if(measuredGap!==null){
