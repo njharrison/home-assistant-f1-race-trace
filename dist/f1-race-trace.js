@@ -393,24 +393,37 @@ class F1RaceTrace extends HTMLElement {
         }
         this.gapBaseline.lap=lap;
       }
-      // Restore gap observations captured by the add-on while the card was closed.
-      // This is a single, race-wide sample clock, not per-driver lap timing.
+      // Restore only observations whose lap has actually been reached.
+      // Never infer the end of a lap from a driver's completed_laps or
+      // sector state: those can lead the race-wide lap counter in replay.
       const saved=this.persistedRecording?.samples||[];
       if(saved.length){
-        const byId=new Map();
+        const byLap=new Map();
         for(const sample of saved){
           const n=Number(sample.lap);
-          if(!Number.isFinite(n)||n<1||n>lap)continue;
-          for(const row of sample.drivers||[]){
-            const id=String(row.id);
-            const gap=/^LAP\\s+\\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
-            if(gap===null)continue;
-            const completed=Number(row.completed_laps)||0;
-            const done=row.sector_state==="s2_done"?2:row.sector_state==="s1_done"?1:0;
-            const stage=Math.max(n-1,completed)+done/3;
-            const x=Math.min(lap,Math.max(1,stage));
-            if(!byId.has(id))byId.set(id,[]);
-            byId.get(id).push({lap:x,gap,at:sample.timestamp});
+          if(!Number.isInteger(n)||n<1||n>lap)continue;
+          if(!byLap.has(n))byLap.set(n,[]);
+          byLap.get(n).push(sample);
+        }
+        const byId=new Map();
+        for(const [n,samples] of byLap){
+          const first=Number(samples[0].timestamp);
+          const last=Number(samples.at(-1).timestamp);
+          // Closed laps may use the entire recorded interval. For the
+          // current lap, progress is relative to the clock observed so far.
+          // In either case never manufacture the next lap boundary.
+          const duration=Math.max(1,last-first);
+          for(const sample of samples){
+            const elapsed=Math.max(0,Number(sample.timestamp)-first);
+            const fraction=Math.min(n===lap?.98:.999,elapsed/Math.max(duration,averagePace));
+            const x=Math.max(1,n-1+fraction);
+            for(const row of sample.drivers||[]){
+              const id=String(row.id);
+              const gap=/^LAP\s+\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
+              if(gap===null)continue;
+              if(!byId.has(id))byId.set(id,[]);
+              byId.get(id).push({lap:x,gap,at:sample.timestamp});
+            }
           }
         }
         for(const d of traces){
