@@ -503,9 +503,10 @@ class F1RaceTrace extends HTMLElement {
               // gap. Until the feed supplies seconds again, a lap deficit
               // is only an approximation, not a measured second gap.
               const prior=previous?.gap;
-              gap=prior!==undefined&&prior>=minimum-averagePace*.35
-                ?Math.max(prior,minimum-averagePace*.35)
-                :minimum;
+              // The lap counter replaces an exact second gap. Preserve the
+              // last measured gap rather than jumping a full lap instantly.
+              // With no previous measurement, use a lap-time estimate.
+              gap=Number.isFinite(prior)?Math.max(prior,minimum-averagePace*.5):minimum;
             }
             if(gap===null)continue;
             // A gap increase can slow or stop the driver, but must not
@@ -552,9 +553,7 @@ class F1RaceTrace extends HTMLElement {
         if(lapDeficit){
           const minimum=Number(lapDeficit[1])*averagePace;
           const prior=restored.at(-1)?.gap??this.gapTraceHistory.get(d.id)?.lastGap;
-          gap=Number.isFinite(prior)&&prior>=minimum-averagePace*.35
-            ?Math.max(prior,minimum-averagePace*.35)
-            :minimum;
+          gap=Number.isFinite(prior)?Math.max(prior,minimum-averagePace*.5):minimum;
         }
         const lastRecordedRaceX=restored.at(-1)?.raceLap??-Infinity;
         const existing=this.gapTraceHistory.get(d.id);
@@ -593,7 +592,8 @@ class F1RaceTrace extends HTMLElement {
       });
     }
     for(const d of traces)d.points=d.points.filter(p=>Number.isFinite(p.y));
-    const chartLap=Math.max(lap,...traces.flatMap(d=>d.points.map(p=>p.lap)).filter(Number.isFinite),1);
+    // Include the lap-ahead dotted copies in the horizontal domain.
+    const chartLap=Math.max(lap,...traces.flatMap(d=>d.points.flatMap(p=>[p.lap,p.lap+1])).filter(Number.isFinite),1);
     const chartEnd=Math.max(lap+0.35,chartLap+0.1);
     // A fixed, symmetrical window spanning exactly one reference lap.
     // Keep out-of-range data intact; the SVG plot clip hides it until
