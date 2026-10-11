@@ -38,6 +38,7 @@ def record(options):
     driver_entity = options.get("driver_entity", "sensor.f1_drivers_driver_positions")
     lap_entity = options.get("lap_entity", "sensor.f1_race_lap_count")
     race_control_entity = options.get("race_control_entity", "sensor.f1_officials_race_control")
+    track_status_entity = options.get("track_status_entity", "sensor.f1_track_status")
     session = requests.Session()
     session.headers.update({"Authorization": "Bearer " + TOKEN})
     recording = {"schema_version": 1, "source": "F1 Sensor", "run": 1, "samples": [], "race_control": []}
@@ -106,11 +107,19 @@ def record(options):
                     "sector_2_lap": d.get("sector_2_lap"),
                     "sector_3_lap": d.get("sector_3_lap"),
                 })
-            signature = json.dumps([lap, compact], sort_keys=True)
+            # Track status is part of the recorded sample stream: a status
+            # transition must be persisted even when no driver gaps change.
+            track_status = None
+            try:
+                track_status = str(get_state(session, track_status_entity).get("state") or "").upper()
+            except (requests.RequestException, ValueError, TypeError) as exc:
+                LOG.debug("Track status unavailable (%s): %s", track_status_entity, exc)
+            signature = json.dumps([lap, compact, track_status], sort_keys=True)
             now = time.time()
             if signature != last_signature:
                 recording["samples"].append({"timestamp": round(now, 3),
-                                              "lap": lap, "drivers": compact})
+                                              "lap": lap, "drivers": compact,
+                                              "track_status": track_status})
                 last_signature = signature
             if now - last_write >= 2:
                 write_atomic(OUTPUT, recording)
