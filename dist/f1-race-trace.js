@@ -692,26 +692,6 @@ class F1RaceTrace extends HTMLElement {
           const driverX=advanceX(previous,targetX);
           history.push({lap:driverX,raceLap:obs.raceX,gap,at:obs.at});
         }
-        // The timing feed may keep publishing a retired car's last gap
-        // indefinitely. If the driver's completed laps / sector milestones
-        // stop advancing for over two reference laps, and their reported gap
-        // is unchanged, end the trace at the last genuine progress event.
-        // Only do this at the *end* of the available history: a car which
-        // subsequently resumes must retain its stopped interval.
-        const finalProgress=rows.at(-1)?.progress;
-        const finalGap=String(rows.at(-1)?.row?.gap??"").trim();
-        let lastAdvance=rows.length-1;
-        while(lastAdvance>0
-          &&Math.abs(rows[lastAdvance-1].progress-finalProgress)<.00001
-          &&String(rows[lastAdvance-1].row?.gap??"").trim()===finalGap)
-          lastAdvance--;
-        const staleSeconds=Number(rows.at(-1)?.at)-Number(rows[lastAdvance]?.at);
-        if(lastAdvance>0&&staleSeconds>2*averagePace){
-          const cutoff=Number(rows[lastAdvance]?.at);
-          while(history.length&&history.at(-1).at>cutoff)history.pop();
-          const driver=traces.find(d=>d.id===id);
-          if(driver)driver.retired=true;
-        }
         byId.set(id,history);
       }
       if(this.config.debug){
