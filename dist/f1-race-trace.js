@@ -333,6 +333,22 @@ class F1RaceTrace extends HTMLElement {
         d.points=[...unique.values()].sort((a,b)=>a.lap-b.lap);
       }
     }
+    if(this.config.debug){
+      const summarize=points=>({count:points.length,first:points[0]?.lap,last:points.at(-1)?.lap,
+        early:points.filter(p=>p.lap<=30).length,
+        nonFinite:points.filter(p=>!Number.isFinite(p.y)).slice(0,8).map(p=>({lap:p.lap,y:String(p.y)}))});
+      const antRaw=liveDrivers.find(d=>d.tla==="ANT");
+      const antSource=drivers.find(d=>d.label==="ANT");
+      const antTrace=traces.find(d=>d.label==="ANT");
+      console.info("[F1 Race Trace] ANT diagnostics",{
+        reference:this.reference,lap,leader:leaderLive?.tla,
+        recordedLapNumbers:Object.keys(antRaw?.laps||{}).map(Number),
+        source:summarize(antSource?.points||[]),
+        plottedBeforeFiniteFilter:summarize(antTrace?.points||[]),
+        leaderDeviationEarly:[2,3,10,20,29,30,31].map(n=>({lap:n,deviation:String(leaderDeviation.get(n))})),
+        hidden:this.hiddenDrivers.has(antSource?.id)
+      });
+    }
     for(const d of traces)d.points=d.points.filter(p=>Number.isFinite(p.y));
     const chartLap=Math.max(lap,...traces.flatMap(d=>d.points.map(p=>p.lap)).filter(Number.isFinite),1);
     const chartEnd=Math.max(lap+0.35,chartLap+0.1);
