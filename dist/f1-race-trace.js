@@ -236,6 +236,21 @@ class F1RaceTrace extends HTMLElement {
         if(!this.liveHistory.has(d.id))this.liveHistory.set(d.id,new Map());
         const history=this.liveHistory.get(d.id);
         for(const p of d.points)if(!history.has(p.lap))history.set(p.lap,{...p});
+        // Fill gaps between *observed* completed-lap anchors. In particular,
+        // replay may begin collecting a driver's points after the race starts.
+        // Do not extrapolate before the first anchor: there is no evidence for
+        // that part of the trace unless actual earlier lap times are present.
+        const known=[...history.values()]
+          .filter(p=>Number.isInteger(p.lap)&&Number.isFinite(p.y))
+          .sort((a,b)=>a.lap-b.lap);
+        for(let i=1;i<known.length;i++){
+          const a=known[i-1],b=known[i],span=b.lap-a.lap;
+          if(span<=1||span>30)continue;
+          for(let n=a.lap+1;n<b.lap;n++){
+            if(!history.has(n))
+              history.set(n,{lap:n,y:a.y+(b.y-a.y)*(n-a.lap)/span,estimated:true,interpolated:true});
+          }
+        }
         // Sector events have their own fractional-lap keys; retain them
         // alongside frozen lap points instead of replacing them.
         // Prefer measured sector points over reconstructed lap points at the
