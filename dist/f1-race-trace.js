@@ -528,14 +528,17 @@ class F1RaceTrace extends HTMLElement {
       }
       for(const [id,rows] of rawHistory){
         rows.sort((a,b)=>a.at-b.at);
-        // Timing-event milestones are actual completed sectors/laps. Build
-        // a continuous progress estimate between adjacent milestones rather
-        // than holding the previous sector for its entire duration.
+        // For historical samples, use completed-lap crossings as anchors.
+        // Sector fractions are timing checkpoints, not a reliable continuous
+        // speed profile: interpolating between them produces a sawtooth
+        // whenever sector pace differs from the assumed reference fractions.
+        // Only use a sector checkpoint for the unfinished live tail.
         const milestones=[];
         for(const obs of rows){
+          const completed=Number(obs.row.completed_laps)||0;
           const last=milestones.at(-1);
-          if(!last||obs.progress>last.progress+0.00001)
-            milestones.push({at:obs.at,progress:obs.progress});
+          if(completed>0&&(!last||completed>last.progress))
+            milestones.push({at:obs.at,progress:completed});
         }
         let eventIndex=0,anchor=null;
         const history=[];
@@ -549,11 +552,11 @@ class F1RaceTrace extends HTMLElement {
             const fraction=Math.max(0,Math.min(1,(obs.at-before.at)/(after.at-before.at)));
             progress=before.progress+(after.progress-before.progress)*fraction;
           }else if(before){
-            // Until another sector event arrives, extrapolate at reference
-            // pace, capped at the next sector boundary.
-            const nextBoundary=sectorBoundary.find(v=>v>before.progress%1+1e-5);
-            const limit=nextBoundary===undefined?Math.floor(before.progress)+1:Math.floor(before.progress)+nextBoundary;
-            progress=Math.min(limit,before.progress+Math.max(0,obs.at-before.at)/Math.max(1,averagePace));
+            // No next lap crossing yet: use the latest sector checkpoint
+            // to bound forward progress, without retroactively reshaping
+            // the already completed historical laps.
+            const elapsed=Math.max(0,obs.at-before.at)/Math.max(1,averagePace);
+            progress=Math.max(before.progress,Math.min(Math.max(before.progress,obs.progress),before.progress+elapsed));
           }
           const gapText=String(obs.row.gap??"").trim();
           const leaderMarker=/^LAP\s+\d+$/i.test(gapText);
