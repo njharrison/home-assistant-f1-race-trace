@@ -36,9 +36,11 @@ def record(options):
         return
     driver_entity = options.get("driver_entity", "sensor.f1_drivers_driver_positions")
     lap_entity = options.get("lap_entity", "sensor.f1_race_lap_count")
+    race_control_entity = options.get("race_control_entity", "sensor.f1_race_control")
     session = requests.Session()
     session.headers.update({"Authorization": "Bearer " + TOKEN})
-    recording = {"schema_version": 1, "source": "F1 Sensor", "run": 1, "samples": []}
+    recording = {"schema_version": 1, "source": "F1 Sensor", "run": 1, "samples": [], "race_control": []}
+    seen_control = set()
     last_lap = None
     last_signature = None
     last_write = 0
@@ -50,10 +52,37 @@ def record(options):
             lap = int(float(lap_state.get("state", "0")))
             if last_lap is not None and lap < last_lap:
                 recording = {"schema_version": 1, "source": "F1 Sensor",
-                             "run": recording["run"] + 1, "samples": []}
+                             "run": recording["run"] + 1, "samples": [], "race_control": []}
                 last_signature = None
+                seen_control.clear()
                 LOG.info("Replay rewind detected; starting recording run %s", recording["run"])
             last_lap = lap
+            # F1 Sensor exposes the latest FIA message and a short history.
+            # Capture each event once, even if it is first seen in history.
+            try:
+                control = get_state(session, race_control_entity)
+                attrs = control.get("attributes") or {}
+                events = list(reversed(attrs.get("history") or []))
+                if attrs.get("event_id"):
+                    events.append(attrs)
+                for event in events:
+                    if not isinstance(event, dict):
+                        continue
+                    event_id = event.get("event_id")
+                    if not event_id or event_id in seen_control:
+                        continue
+                    seen_control.add(event_id)
+                    recording["race_control"].append({
+                        "event_id": event_id,
+                        "observed_at": round(time.time(), 3),
+                        "lap": lap,
+                        "utc": event.get("utc"),
+                        "category": event.get("category"),
+                        "flag": event.get("flag"),
+                        "message": event.get("message"),
+                    })
+            except (requests.RequestException, ValueError, TypeError) as exc:
+                LOG.debug("Race control unavailable (%s): %s", race_control_entity, exc)
             drivers = driver_state.get("attributes", {}).get("drivers", [])
             if not isinstance(drivers, list):
                 drivers = []
