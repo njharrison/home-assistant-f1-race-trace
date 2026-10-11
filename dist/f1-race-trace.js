@@ -367,85 +367,98 @@ class F1RaceTrace extends HTMLElement {
         d.points=[...unique.values()].sort((a,b)=>a.lap-b.lap);
       }
     }
-    // v0.5: derive every point from the same continuous leader timeline.
-    // Do not join independently reconstructed lap history to live gaps.
+    // v0.3: freeze one gap-based sample stream per driver. A completed lap
+    // changes the x-axis stage, not the y-axis origin.
     if(useGapEngine){
       const now=Date.now();
-      const leaderId=String(leaderLive?.racing_number||leaderLive?.tla||"");
+      if(!this.gapClock)this.gapClock={lap,start:now};
+      if(lap!==this.gapClock.lap){
+        // The race clock can advance more than one lap on a replay seek.
+        this.gapClock={lap,start:now};
+      }
+      const fraction=Math.min(.98,Math.max(0,(now-this.gapClock.start)/1000/Math.max(1,averagePace)));
+      const liveX=Math.max(1,lap-1+fraction);
       const rawById=new Map(liveDrivers.map(d=>[String(d.racing_number||d.tla),d]));
-      const gapOf=raw=>{
-        if(!raw)return null;
-        const value=String(raw.gap_to_leader??raw.gap??"").trim();
-        if(/^LAP\s+\d+$/i.test(value))return 0;
-        return this.seconds(value);
-      };
-      // Completed laps determine the slope for their entire interval.
-      // A missing lap has zero deviation (reference pace), not a reset.
-      const baseline=new Map([[0,0]]);
-      let sum=0;
-      for(let n=1;n<=lap;n++){
-        sum+=averagePace-(leaderTimes.get(n)??averagePace);
-        baseline.set(n,sum);
+      const leaderId=String(leaderLive?.racing_number||leaderLive?.tla||"");
+      const leaderRaw=rawById.get(leaderId);
+      const leaderGap=leaderRaw?0:null;
+      // Integrate the leader's pace on one continuous baseline. The lap
+      // deviation is applied only when the lap counter changes.
+      if(!this.gapBaseline)this.gapBaseline={lap,value:0};
+      if(lap<this.gapBaseline.lap)this.gapBaseline={lap,value:0};
+      if(lap>this.gapBaseline.lap){
+        for(let n=this.gapBaseline.lap;n<lap;n++){
+          const t=leaderTimes.get(n);
+          if(t!==undefined)this.gapBaseline.value+=averagePace-t;
+        }
+        this.gapBaseline.lap=lap;
       }
-      const at=x=>{
-        const n=Math.max(0,Math.min(lap,Math.floor(x)));
-        const f=Math.max(0,Math.min(1,x-n));
-        const left=baseline.get(n)??sum;
-        return left+f*((baseline.get(n+1)??left)-left);
-      };
-      // Recorded snapshots use a consistent per-lap timestamp clock.
+      // Restore gap observations captured by the add-on while the card was closed.
+      // This is a single, race-wide sample clock, not per-driver lap timing.
       const saved=this.persistedRecording?.samples||[];
-      const perLap=new Map();
-      for(const sample of saved){
-        const n=Number(sample.lap);
-        if(!Number.isInteger(n)||n<1||n>lap)continue;
-        if(!perLap.has(n))perLap.set(n,[]);
-        perLap.get(n).push(sample);
-      }
-      const restored=new Map();
-      for(const [n,rows] of perLap){
-        const first=Number(rows[0].timestamp);
-        const elapsed=Math.max(1,Number(rows.at(-1).timestamp)-first);
-        // A replay can be accelerated. Use the observed lap duration when
-        // there are multiple snapshots, rather than an arbitrary wall clock.
-        const span=rows.length>1?elapsed:averagePace;
-        for(const sample of rows){
-          const x=Math.max(1,n-1+Math.min(.999,(Number(sample.timestamp)-first)/span));
-          for(const raw of sample.drivers||[]){
-            const id=String(raw.id);
-            const gap=gapOf(raw);
+      if(saved.length){
+        const byId=new Map();
+        for(const sample of saved){
+          const n=Number(sample.lap);
+          if(!Number.isFinite(n)||n<1||n>lap)continue;
+          for(const row of sample.drivers||[]){
+            const id=String(row.id);
+            const gap=/^LAP\\s+\\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
             if(gap===null)continue;
-            if(!restored.has(id))restored.set(id,[]);
-            restored.get(id).push({lap:x,y:at(x)-gap,estimated:true,gap});
+            const completed=Number(row.completed_laps)||0;
+            const done=row.sector_state==="s2_done"?2:row.sector_state==="s1_done"?1:0;
+            const stage=Math.max(n-1,completed)+done/3;
+            const x=Math.min(lap,Math.max(1,stage));
+            if(!byId.has(id))byId.set(id,[]);
+            byId.get(id).push({lap:x,gap,at:sample.timestamp});
           }
         }
-      }
-      if(!this.gapClock||lap!==this.gapClock.lap)this.gapClock={lap,start:now};
-      const fraction=Math.min(.999,Math.max(0,(now-this.gapClock.start)/1000/Math.max(1,averagePace)));
-      const liveX=Math.max(1,lap-1+fraction);
-      if(leaderId&&!traces.some(d=>d.id===leaderId)){
-        const source=drivers.find(d=>d.id===leaderId);
-        if(source)traces.unshift({...source,points:[]});
+        for(const d of traces){
+          if(this.gapTraceHistory.has(d.id))continue;
+          const observations=byId.get(d.id)||[];
+          if(!observations.length)continue;
+          const first=observations[0];
+          const anchor=d.points.filter(p=>p.lap<=first.lap).at(-1);
+          const baselineAt=n=>-(leaderDeviation.get(Math.floor(n))??0);
+          const offset=anchor?anchor.y-(baselineAt(first.lap)-first.gap):0;
+          const restored=[];
+          let previousX=-Infinity;
+          for(const observation of observations){
+            const x=observation.lap;
+            if(x<previousX)continue;
+            const y=baselineAt(x)-observation.gap+offset;
+            if(x===previousX)restored[restored.length-1]={lap:x,y,estimated:true};
+            else restored.push({lap:x,y,estimated:true});
+            previousX=x;
+          }
+          const seed=d.points.filter(p=>p.lap<first.lap-.001);
+          this.gapTraceHistory.set(d.id,{points:[...seed,...restored],offset,lastGap:observations.at(-1).gap});
+        }
       }
       for(const d of traces){
-        const points=restored.get(d.id)||[];
-        const gap=gapOf(rawById.get(d.id));
-        // Never splice a reconstructed lap series onto a sampled gap series:
-        // they have different reference origins and caused the field-wide step.
+        const raw=rawById.get(d.id);
+        const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(String(raw?.gap_to_leader??"").trim());
+        const gap=isLeader?0:this.seconds(raw?.gap_to_leader);
+        let state=this.gapTraceHistory.get(d.id);
+        if(!state){
+          // Historical reconstruction is only a starting approximation;
+          // don't splice it onto a live stream at every new lap.
+          const seed=d.points.filter(p=>Number.isFinite(p.y)&&p.lap<liveX-.005).map(p=>({...p}));
+          const last=seed.at(-1);
+          const origin=this.gapBaseline.value-(gap??0);
+          state={points:seed,offset:last?last.y-origin:0,lastGap:gap};
+          this.gapTraceHistory.set(d.id,state);
+        }
         if(gap!==null){
-          const last=points.at(-1);
-          if(!last||liveX>last.lap+.0001)
-            points.push({lap:liveX,y:at(liveX)-gap,estimated:true,gap});
+          const last=state.points.at(-1);
+          const target=this.gapBaseline.value-gap+state.offset;
+          if(!last||liveX>last.lap+.0001){
+            state.points.push({lap:liveX,y:target,estimated:true});
+            if(state.points.length>3000)state.points.splice(0,state.points.length-3000);
+          }
+          state.lastGap=gap;
         }
-        // Keep a monotonic X timeline. Same-X samples replace, not connect.
-        const ordered=points.filter(p=>Number.isFinite(p.lap)&&Number.isFinite(p.y))
-          .sort((a,b)=>a.lap-b.lap);
-        const unique=[];
-        for(const p of ordered){
-          if(unique.length&&Math.abs(unique.at(-1).lap-p.lap)<.0001)unique[unique.length-1]=p;
-          else unique.push(p);
-        }
-        d.points=unique;
+        d.points=state.points.filter(p=>p.lap<=lap);
       }
     }
     if(this.config.debug){
@@ -467,12 +480,7 @@ class F1RaceTrace extends HTMLElement {
     for(const d of traces)d.points=d.points.filter(p=>Number.isFinite(p.y));
     const chartLap=Math.max(lap,...traces.flatMap(d=>d.points.map(p=>p.lap)).filter(Number.isFinite),1);
     const chartEnd=Math.max(lap+0.35,chartLap+0.1);
-    const wrapEnabled=this.config.wrap_lapped!==false&&useGapEngine;
-    const displayTraces=traces.map(d=>({...d,points:d.points.map(p=>{
-      const wraps=wrapEnabled&&Number.isFinite(p.gap)?Math.max(0,Math.floor((p.gap+1e-6)/averagePace)):0;
-      return {...p,wraps,displayY:p.y+wraps*averagePace};
-    })}));
-    const values=displayTraces.flatMap(d=>d.points.map(p=>p.displayY));
+    const values=traces.flatMap(d=>d.points.map(p=>p.y));
     let low=Math.min(0,...values),high=Math.max(0,...values);
     const margin=Math.max(3,(high-low)*.08);low-=margin;high+=margin;
     if(!this.fixedScale)this.fixedScale={low,high};
@@ -484,24 +492,24 @@ class F1RaceTrace extends HTMLElement {
     let grid="";
     for(let i=0;i<=8;i++){const v=low+(high-low)*i/8;grid+=`<line x1="${L}" y1="${y(v)}" x2="${W-R}" y2="${y(v)}" stroke="#263245"/><text x="${L-9}" y="${y(v)+5}" text-anchor="end" fill="#93a4b9" font-size="17">${v.toFixed(1)}s</text>`;}
     for(let n=1;n<=chartEnd;n+=Math.max(1,Math.ceil(chartEnd/14)))grid+=`<line x1="${x(n)}" y1="${T}" x2="${x(n)}" y2="${H-B}" stroke="#202b39"/><text x="${x(n)}" y="${H-20}" text-anchor="middle" fill="#93a4b9" font-size="17">${n}</text>`;
-    const lines=displayTraces.filter(d=>d.points.length>0).map(d=>{
+    const lines=traces.filter(d=>d.points.length>0).map(d=>{
       // Split discontinuities rather than drawing artificial near-vertical
       // connections between estimates and timing-line observations.
       const segments=[];
       let segment=[];
       for(const p of d.points){
         const prev=segment.at(-1);
-        if(prev&&(p.wraps!==prev.wraps||(p.lap-prev.lap<0.025&&Math.abs(p.displayY-prev.displayY)>1.5))){
+        if(prev&&(p.lap-prev.lap<0.025&&Math.abs(p.y-prev.y)>1.5)){
           if(segment.length)segments.push(segment);
           segment=[];
         }
         segment.push(p);
       }
       if(segment.length)segments.push(segment);
-      const paths=segments.map(points=>`<polyline points="${points.map(p=>`${x(p.lap).toFixed(1)},${y(p.displayY).toFixed(1)}`).join(" ")}" fill="none" stroke="${d.color}" stroke-width="3.2" ${(d.retired||points[0]?.wraps>0)?'stroke-dasharray="7 6"':''}/>`).join("");
+      const paths=segments.map(points=>`<polyline points="${points.map(p=>`${x(p.lap).toFixed(1)},${y(p.y).toFixed(1)}`).join(" ")}" fill="none" stroke="${d.color}" stroke-width="3.2" ${d.retired?'stroke-dasharray="7 6"':''}/>`).join("");
       const last=d.points.at(-1);
-      const pitDots=d.points.filter(p=>p.pit).map(p=>`<rect x="${x(p.lap)-5}" y="${y(p.displayY)-5}" width="10" height="10" fill="#0b121d" stroke="${d.color}" stroke-width="2"/>`).join("");
-      return `${paths}<circle cx="${x(last.lap)}" cy="${y(last.displayY)}" r="4" fill="${d.color}"/><text x="${Math.min(W-R+9,x(last.lap)+9)}" y="${y(last.displayY)+5}" fill="${d.color}" font-size="17" font-weight="700">${this.escape(d.label)}${last.wraps?" −"+last.wraps+" lap"+(last.wraps>1?"s":""):""}</text>${pitDots}`;
+      const pitDots=d.points.filter(p=>p.pit).map(p=>`<rect x="${x(p.lap)-5}" y="${y(p.y)-5}" width="10" height="10" fill="#0b121d" stroke="${d.color}" stroke-width="2"/>`).join("");
+      return `${paths}<circle cx="${x(last.lap)}" cy="${y(last.y)}" r="4" fill="${d.color}"/><text x="${Math.min(W-R+9,x(last.lap)+9)}" y="${y(last.y)+5}" fill="${d.color}" font-size="17" font-weight="700">${this.escape(d.label)}</text>${pitDots}`;
     }).join("");
     const opts=[{id:"AVERAGE",label:"Average race pace"},{id:"LEADER",label:"Race leader"},...drivers.map(d=>({id:d.id,label:d.label}))];
     this.shadowRoot.innerHTML=`<style>
