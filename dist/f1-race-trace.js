@@ -724,6 +724,53 @@ class F1RaceTrace extends HTMLElement {
         hidden:ver?this.hiddenDrivers.has(ver.id):null
       });
     }
+    // FIA race-control events are stored independently of the timing trace.
+    // Draw neutralised periods behind the cars; never infer them from gaps.
+    const controlEvents=this.persistedRecording?.race_control||[];
+    const recordedSamples=this.persistedRecording?.samples||[];
+    const raceXAt=time=>{
+      if(!recordedSamples.length)return null;
+      let lo=0,hi=recordedSamples.length-1;
+      while(lo<hi){
+        const mid=(lo+hi)>>1;
+        if(Number(recordedSamples[mid].timestamp)<time)lo=mid+1;
+        else hi=mid;
+      }
+      const a=recordedSamples[Math.max(0,lo-1)];
+      const b=recordedSamples[lo];
+      const ta=Number(a.timestamp),tb=Number(b.timestamp);
+      const xa=Number(a.lap)-1,xb=Number(b.lap)-1;
+      if(!Number.isFinite(ta)||!Number.isFinite(tb))return null;
+      return ta<time&&tb>ta?xa+(xb-xa)*(time-ta)/(tb-ta):xb;
+    };
+    const controlPeriods=[];
+    let caution=null;
+    for(const event of controlEvents){
+      const message=String(event.message||"").toUpperCase();
+      const category=String(event.category||"").toUpperCase();
+      const flag=String(event.flag||"").toUpperCase();
+      const at=raceXAt(Number(event.observed_at));
+      if(at===null)continue;
+      const vscStart=/VIRTUAL SAFETY CAR DEPLOYED|VSC DEPLOYED/.test(message);
+      const scStart=!vscStart&&/SAFETY CAR DEPLOYED/.test(message);
+      const vscEnd=/VSC ENDING|VIRTUAL SAFETY CAR ENDING|VSC ENDED/.test(message);
+      const scEnd=/SAFETY CAR IN THIS LAP|SAFETY CAR ENDING/.test(message);
+      const green=/GREEN FLAG|TRACK CLEAR/.test(message)||flag==="GREEN"&&["TRACK","SAFETYCAR","VSC"].includes(category);
+      if(vscStart||scStart){
+        if(caution)controlPeriods.push({...caution,end:at});
+        caution={start:at,type:vscStart?"VSC":"SC"};
+      }else if(caution&&(green||(caution.type==="VSC"&&vscEnd)||(caution.type==="SC"&&scEnd))){
+        controlPeriods.push({...caution,end:at});
+        caution=null;
+      }
+    }
+    if(caution)controlPeriods.push({...caution,end:lap});
+    const cautionBands=controlPeriods.map(p=>{
+      const x0=Math.max(L,x(p.start)),x1=Math.min(W-R,x(p.end));
+      if(x1<=x0)return "";
+      const color=p.type==="VSC"?"#e5b84b":"#f5a15b";
+      return `<rect x="${x0}" y="${T}" width="${x1-x0}" height="${H-T-B}" fill="${color}" opacity=".10"/><line x1="${x0}" y1="${T}" x2="${x0}" y2="${H-B}" stroke="${color}" stroke-width="2" stroke-dasharray="6 5"/><text x="${x0+5}" y="${T+18}" fill="${color}" font-size="13" font-weight="700">${p.type}</text>`;
+    }).join("");
     const lines=traces.filter(d=>d.points.length>0).map(d=>{
       // The dotted copy represents the same car one reference lap ahead:
       // shift BOTH its circuit position (X) and its time offset (Y).
@@ -751,7 +798,7 @@ class F1RaceTrace extends HTMLElement {
       .note{font-size:12px;color:#9eacbd;padding:0 24px 18px}.empty{padding:40px}
     </style><ha-card>
       <div class="head"><div><div class="title">RACE TRACE <span style="color:#ff8700">/ F1</span></div><div class="subtitle">LAP ${lap} · ${drivers.length} DRIVERS · ${traces.length} TRACES · ${archived?"ARCHIVE":"LIVE"}</div></div><div class="zoom-controls"><button id="zoom-in" title="Zoom in horizontally">+</button><button id="zoom-out" title="Zoom out horizontally">−</button><button id="zoom-reset" title="Show full race">Reset</button></div><label>REFERENCE <select id="reference">${opts.map(o=>`<option value="${this.escape(o.id)}" ${this.reference===o.id?"selected":""}>${this.escape(o.label)}</option>`).join("")}</select></label></div>
-      ${traces.length?`<div class="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><clipPath id="race-trace-plot"><rect x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}"/></clipPath></defs><rect width="${W}" height="${H}" fill="#0b121d"/>${grid}<g clip-path="url(#race-trace-plot)"><line x1="${L}" y1="${y(0)}" x2="${W-R}" y2="${y(0)}" stroke="#8393a6" stroke-dasharray="8 7"/>${lines}</g></svg></div>`:'<div class="empty">Waiting for replay driver timing data.</div>'}
+      ${traces.length?`<div class="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><clipPath id="race-trace-plot"><rect x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}"/></clipPath></defs><rect width="${W}" height="${H}" fill="#0b121d"/>${grid}<g clip-path="url(#race-trace-plot)">${cautionBands}<line x1="${L}" y1="${y(0)}" x2="${W-R}" y2="${y(0)}" stroke="#8393a6" stroke-dasharray="8 7"/>${lines}</g></svg></div>`:'<div class="empty">Waiting for replay driver timing data.</div>'}
       <div class="legend">${drivers.map(d=>`<button data-driver="${this.escape(d.id)}" class="${this.hiddenDrivers.has(d.id)?"off":""}"><span class="dot" style="background:${d.color}"></span>${this.escape(d.label)} · P${this.escape(d.position)}</button>`).join("")}</div>
       <div class="note">${archived?"Historical FastF1 lap-end timing. Gaps measured at the timing line, not simultaneous car positions; lapped cars are omitted when not comparable. Squares indicate pit-in laps.":"Live: shared race-clock gap traces; lap times seed historical data and do not snap live positions. "+(this.archiveError?"Archive unavailable: "+this.escape(this.archiveError):"Waiting for historical archive.")}</div>
     </ha-card>`;
