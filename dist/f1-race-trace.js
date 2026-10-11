@@ -71,9 +71,47 @@ class F1RaceTrace extends HTMLElement {
     this.recordingFetchAt=now;
     this.recordingLoading=true;
     try{
-      const response=await fetch(this.config.recording_url||"/local/f1-race-trace/live-recording.json",{cache:"no-store"});
-      if(!response.ok)return;
-      const data=await response.json();
+      const fullUrl=this.config.recording_url||"/local/f1-race-trace/live-recording.json";
+      // Default delta is adjacent to the full archive; an explicit URL
+      // supports custom recorder installations.
+      const deltaUrl=this.config.recording_delta_url||
+        fullUrl.replace(/\.json(?=\?|$)/,"-delta.json");
+      let data=null;
+      if(this.persistedRecording&&deltaUrl!==fullUrl){
+        try{
+          const response=await fetch(deltaUrl,{cache:"no-store"});
+          if(response.ok){
+            const delta=await response.json();
+            const previous=this.persistedRecording;
+            const currentSamples=previous.samples.length;
+            const currentEvents=(previous.race_control||[]).length;
+            // The rolling window must cover every sample since our last
+            // poll. A rewind, missed window, or stale file triggers a full
+            // reload rather than silently losing observations.
+            if(delta.schema_version===1&&delta.run===previous.run
+              &&Array.isArray(delta.samples)&&Array.isArray(delta.race_control)
+              &&delta.sample_start<=currentSamples
+              &&delta.event_start<=currentEvents
+              &&delta.sample_count>=currentSamples
+              &&delta.event_count>=currentEvents
+              &&delta.sample_start+delta.samples.length===delta.sample_count
+              &&delta.event_start+delta.race_control.length===delta.event_count){
+              if(delta.sample_count===currentSamples&&delta.event_count===currentEvents)return;
+              data={...previous,
+                samples:previous.samples.concat(delta.samples.slice(currentSamples-delta.sample_start)),
+                race_control:(previous.race_control||[]).concat(
+                  delta.race_control.slice(currentEvents-delta.event_start))};
+            }
+          }
+        }catch(err){
+          if(this.config.debug)console.warn("[F1 Race Trace] Delta unavailable; loading archive",err);
+        }
+      }
+      if(!data){
+        const response=await fetch(fullUrl,{cache:"no-store"});
+        if(!response.ok)return;
+        data=await response.json();
+      }
       if(data.schema_version!==1||!Array.isArray(data.samples))return;
       const tail=data.samples.at(-1);
       const events=data.race_control||[];
