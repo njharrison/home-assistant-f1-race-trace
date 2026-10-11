@@ -404,16 +404,32 @@ class F1RaceTrace extends HTMLElement {
         byLap.get(n).push(sample);
       }
       const byId=new Map();
-      for(const [n,rows] of byLap){
-        rows.sort((a,b)=>Number(a.timestamp)-Number(b.timestamp));
-        const first=Number(rows[0].timestamp);
-        const last=Number(rows.at(-1).timestamp);
-        // For completed laps use their observed duration. For the current
-        // lap use reference pace so new samples progress left-to-right.
-        const duration=n<lap?Math.max(1,last-first):Math.max(1,averagePace);
+      const lapsSorted=[...byLap.keys()].sort((a,b)=>a-b);
+      // Race-wide lap transition timestamps form a single replay clock.
+      // The next lap's first observation closes the previous interval.
+      const startByLap=new Map();
+      for(const n of lapsSorted){
+        const rows=byLap.get(n).sort((a,b)=>Number(a.timestamp)-Number(b.timestamp));
+        startByLap.set(n,Number(rows[0].timestamp));
+      }
+      const durations=[];
+      for(const n of lapsSorted){
+        if(startByLap.has(n+1)){
+          const duration=startByLap.get(n+1)-startByLap.get(n);
+          if(duration>0)durations.push(duration);
+        }
+      }
+      durations.sort((a,b)=>a-b);
+      const replayLapDuration=durations.length?durations[Math.floor(durations.length/2)]:averagePace;
+      for(const n of lapsSorted){
+        const rows=byLap.get(n);
+        const first=startByLap.get(n);
+        const next=startByLap.get(n+1);
+        const duration=next!==undefined&&next>first?next-first:replayLapDuration;
         for(const sample of rows){
           const elapsed=Math.max(0,Number(sample.timestamp)-first);
-          const x=Math.max(1,n-1+Math.min(n<lap?.999:.98,elapsed/duration));
+          // Never project an unfinished lap to its far boundary.
+          const x=Math.max(1,n-1+Math.min(.999,elapsed/Math.max(1,duration)));
           for(const row of sample.drivers||[]){
             const id=String(row.id);
             const gap=/^LAP\s+\d+$/i.test(String(row.gap??"").trim())?0:this.seconds(row.gap);
