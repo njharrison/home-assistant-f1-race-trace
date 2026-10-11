@@ -27,6 +27,7 @@ class F1RaceTrace extends HTMLElement {
     this.recordingTimer = null;
     this.recordingLoading = false;
     this.xWindow = null;
+    this.yWindow = null;
   }
   connectedCallback(){
     if(!this.recordingTimer)this.recordingTimer=setInterval(()=>this.loadRecording(),1000);
@@ -50,6 +51,7 @@ class F1RaceTrace extends HTMLElement {
     this.recordingFetchAt=0;
     this.recordingRun=null;
     this.xWindow=null;
+    this.yWindow=null;
     this.loadArchive();
     this.render();
   }
@@ -531,18 +533,15 @@ class F1RaceTrace extends HTMLElement {
     // Keep out-of-range data intact; the SVG plot clip hides it until
     // lap-wrapping is enabled, without rescaling the Y axis.
     const halfReferenceLap=Math.max(1,averagePace)/2;
-    const low=-halfReferenceLap,high=halfReferenceLap;
+    const defaultLow=-halfReferenceLap,defaultHigh=halfReferenceLap;
+    const low=this.yWindow?.low??defaultLow;
+    const high=this.yWindow?.high??defaultHigh;
     const W=1400,H=720,L=78,R=110,T=40,B=60;
     const fullStart=1,fullEnd=Math.max(2,chartEnd);
-    if(this.xWindow){
-      const width=Math.min(fullEnd-fullStart,Math.max(.35,this.xWindow.end-this.xWindow.start));
-      const start=Math.max(fullStart,Math.min(this.xWindow.start,fullEnd-width));
-      this.xWindow={start,end:start+width};
-    }
     const viewStart=this.xWindow?.start??fullStart;
     const viewEnd=this.xWindow?.end??fullEnd;
     const x=n=>L+(n-viewStart)/Math.max(.001,viewEnd-viewStart)*(W-L-R);
-    const y=n=>T+(high-n)/(high-low)*(H-T-B);
+    const y=n=>T+(high-n)/Math.max(.001,high-low)*(H-T-B);
     let grid="";
     for(let i=0;i<=8;i++){const v=low+(high-low)*i/8;grid+=`<line x1="${L}" y1="${y(v)}" x2="${W-R}" y2="${y(v)}" stroke="#263245"/><text x="${L-9}" y="${y(v)+5}" text-anchor="end" fill="#93a4b9" font-size="17">${v.toFixed(1)}s</text>`;}
     const tickStep=Math.max(1,Math.ceil((viewEnd-viewStart)/14));
@@ -585,73 +584,86 @@ class F1RaceTrace extends HTMLElement {
       <div class="legend">${drivers.map(d=>`<button data-driver="${this.escape(d.id)}" class="${this.hiddenDrivers.has(d.id)?"off":""}"><span class="dot" style="background:${d.color}"></span>${this.escape(d.label)} · P${this.escape(d.position)}</button>`).join("")}</div>
       <div class="note">${archived?"Historical FastF1 lap-end timing. Gaps measured at the timing line, not simultaneous car positions; lapped cars are omitted when not comparable. Squares indicate pit-in laps.":"Live: shared race-clock gap traces; lap times seed historical data and do not snap live positions. "+(this.archiveError?"Archive unavailable: "+this.escape(this.archiveError):"Waiting for historical archive.")}</div>
     </ha-card>`;
-    const zoom=(factor,center=(viewStart+viewEnd)/2)=>{
-      const width=Math.max(.35,Math.min(fullEnd-fullStart,(viewEnd-viewStart)*factor));
-      const fraction=(center-viewStart)/Math.max(.001,viewEnd-viewStart);
-      const start=Math.max(fullStart,Math.min(fullEnd-width,center-fraction*width));
-      this.xWindow={start,end:start+width};
-      if(width>=fullEnd-fullStart-.001)this.xWindow=null;
+    // Pan and zoom a true 2D viewport. Do not clamp X at the race
+    // extents: clamping caused dragging to feel like unwanted zoom.
+    const changeView=(factorX,factorY,fx=.5,fy=.5)=>{
+      const xr=this.xWindow||{start:fullStart,end:fullEnd};
+      const yr=this.yWindow||{low:defaultLow,high:defaultHigh};
+      const xSpan=Math.max(.1,(xr.end-xr.start)*factorX);
+      const ySpan=Math.max(.1,(yr.high-yr.low)*factorY);
+      const cx=xr.start+fx*(xr.end-xr.start);
+      const cy=yr.high-fy*(yr.high-yr.low);
+      this.xWindow={start:cx-fx*xSpan,end:cx+(1-fx)*xSpan};
+      this.yWindow={low:cy-(1-fy)*ySpan,high:cy+fy*ySpan};
       this.render();
     };
-    this.shadowRoot.getElementById("zoom-in")?.addEventListener("click",()=>zoom(.65));
-    this.shadowRoot.getElementById("zoom-out")?.addEventListener("click",()=>zoom(1/.65));
-    this.shadowRoot.getElementById("zoom-reset")?.addEventListener("click",()=>{this.xWindow=null;this.render();});
+    this.shadowRoot.getElementById("zoom-in")?.addEventListener("click",()=>changeView(.7,.7));
+    this.shadowRoot.getElementById("zoom-out")?.addEventListener("click",()=>changeView(1/.7,1/.7));
+    this.shadowRoot.getElementById("zoom-reset")?.addEventListener("click",()=>{
+      this.xWindow=null;this.yWindow=null;this.render();
+    });
     const svg=this.shadowRoot.querySelector(".chart svg");
     if(svg){
-      const pointerX=e=>{
+      const coords=e=>{
         const rect=svg.getBoundingClientRect();
-        return Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width*W-L)/(W-L-R));
+        return {
+          x:Math.max(0,Math.min(1,((e.clientX-rect.left)/rect.width*W-L)/(W-L-R))),
+          y:Math.max(0,Math.min(1,((e.clientY-rect.top)/rect.height*H-T)/(H-T-B)))
+        };
       };
       svg.addEventListener("wheel",e=>{
         e.preventDefault();
-        zoom(e.deltaY>0?1.18:1/1.18,viewStart+pointerX(e)*(viewEnd-viewStart));
+        const c=coords(e),factor=e.deltaY>0?1.18:1/1.18;
+        changeView(e.shiftKey?1:factor,e.altKey?1:factor,c.x,c.y);
       },{passive:false});
-      // Window-level handlers survive render() replacing the SVG during a drag.
       svg.addEventListener("pointerdown",e=>{
         if(e.pointerType==="mouse"&&e.button!==0)return;
         e.preventDefault();
         if(!this._panPointers)this._panPointers=new Map();
-        this._panPointers.set(e.pointerId,e.clientX);
+        this._panPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
         this._panPrevious=null;
-        if(!this._panMove){
-          this._panMove=event=>{
-            if(!this._panPointers?.has(event.pointerId))return;
-            this._panPointers.set(event.pointerId,event.clientX);
-            const positions=[...this._panPointers.values()].sort((a,b)=>a-b);
-            const center=positions.reduce((a,b)=>a+b,0)/positions.length;
-            const distance=positions.length>1?positions.at(-1)-positions[0]:null;
+        if(this._panMove)return;
+        this._panMove=event=>{
+          if(!this._panPointers?.has(event.pointerId))return;
+          this._panPointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+          const pts=[...this._panPointers.values()];
+          const center={x:pts.reduce((a,p)=>a+p.x,0)/pts.length,y:pts.reduce((a,p)=>a+p.y,0)/pts.length};
+          const distance=pts.length>1?Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y):null;
+          if(this._panPrevious){
             const rect=this.shadowRoot.querySelector(".chart svg")?.getBoundingClientRect();
             if(!rect)return;
-            if(this._panPrevious){
-              const full=Math.max(2,this.lastLap+.35);
-              const start=this.xWindow?.start??1;
-              const end=this.xWindow?.end??full;
-              const span=end-start;
-              const dx=(center-this._panPrevious.center)/rect.width*W/(W-L-R)*span;
-              let width=span;
-              if(distance!==null&&this._panPrevious.distance!==null&&distance>4&&this._panPrevious.distance>4)
-                width=Math.max(.35,Math.min(full-1,span*this._panPrevious.distance/distance));
-              const fraction=Math.max(0,Math.min(1,((center-rect.left)/rect.width*W-L)/(W-L-R)));
-              const next=Math.max(1,Math.min(full-width,start-dx+(span-width)*fraction));
-              this.xWindow={start:next,end:next+width};
-              this.render();
-            }
-            this._panPrevious={center,distance};
-          };
-          this._panEnd=event=>{
-            this._panPointers?.delete(event.pointerId);
-            this._panPrevious=null;
-            if(!this._panPointers?.size){
-              window.removeEventListener("pointermove",this._panMove);
-              window.removeEventListener("pointerup",this._panEnd);
-              window.removeEventListener("pointercancel",this._panEnd);
-              this._panMove=null;
-            }
-          };
-          window.addEventListener("pointermove",this._panMove);
-          window.addEventListener("pointerup",this._panEnd);
-          window.addEventListener("pointercancel",this._panEnd);
-        }
+            const xr=this.xWindow||{start:1,end:Math.max(2,this.lastLap+.35)};
+            const yr=this.yWindow||{low:-halfReferenceLap,high:halfReferenceLap};
+            const spanX=xr.end-xr.start,spanY=yr.high-yr.low;
+            const dx=(center.x-this._panPrevious.center.x)/rect.width*W/(W-L-R)*spanX;
+            const dy=(center.y-this._panPrevious.center.y)/rect.height*H/(H-T-B)*spanY;
+            let factor=1;
+            if(distance!==null&&this._panPrevious.distance!==null&&distance>8&&this._panPrevious.distance>8)
+              factor=Math.max(.5,Math.min(2,this._panPrevious.distance/distance));
+            const fx=Math.max(0,Math.min(1,((center.x-rect.left)/rect.width*W-L)/(W-L-R)));
+            const fy=Math.max(0,Math.min(1,((center.y-rect.top)/rect.height*H-T)/(H-T-B)));
+            const nextX=spanX*factor,nextY=spanY*factor;
+            const anchorX=xr.start+fx*spanX-dx;
+            const anchorY=yr.high-fy*spanY+dy;
+            this.xWindow={start:anchorX-fx*nextX,end:anchorX+(1-fx)*nextX};
+            this.yWindow={low:anchorY-(1-fy)*nextY,high:anchorY+fy*nextY};
+            this.render();
+          }
+          this._panPrevious={center,distance};
+        };
+        this._panEnd=event=>{
+          this._panPointers?.delete(event.pointerId);
+          this._panPrevious=null;
+          if(!this._panPointers?.size){
+            window.removeEventListener("pointermove",this._panMove);
+            window.removeEventListener("pointerup",this._panEnd);
+            window.removeEventListener("pointercancel",this._panEnd);
+            this._panMove=null;
+          }
+        };
+        window.addEventListener("pointermove",this._panMove);
+        window.addEventListener("pointerup",this._panEnd);
+        window.addEventListener("pointercancel",this._panEnd);
       });
     }
     this.shadowRoot.getElementById("reference")?.addEventListener("change",e=>{this.reference=e.target.value;this.render();});
