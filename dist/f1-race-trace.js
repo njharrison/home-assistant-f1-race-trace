@@ -211,6 +211,23 @@ class F1RaceTrace extends HTMLElement {
     const raw=s?.attributes?.drivers;
     const liveDrivers=Array.isArray(raw)?raw:[];
     const drivers=(this.config.archive_url&&this.archiveDrivers(liveDrivers))||this.data(liveDrivers);
+    // Teammates normally share the same team hex. Give the second driver
+    // a subtly lighter tint, consistently ordered by racing number.
+    const colorGroups=new Map();
+    for(const d of drivers){
+      const key=String(d.color||"").toLowerCase();
+      if(!/^#[0-9a-f]{6}$/.test(key))continue;
+      if(!colorGroups.has(key))colorGroups.set(key,[]);
+      colorGroups.get(key).push(d);
+    }
+    for(const [base,group] of colorGroups){
+      if(group.length<2)continue;
+      group.sort((a,b)=>(Number(a.id)||999)-(Number(b.id)||999));
+      group.slice(1).forEach(d=>{
+        const rgb=[1,3,5].map(i=>parseInt(base.slice(i,i+2),16));
+        d.color="#"+rgb.map(v=>Math.round(v*.76+255*.24).toString(16).padStart(2,"0")).join("");
+      });
+    }
     const lap=Math.max(1,Number(hass?.states?.[this.config.lap_entity]?.state)||1);
     if(this.lastLap!==null&&lap<this.lastLap){this.liveHistory.clear();this.sectorHistory.clear();this.gapSamples.clear();this.gapTraceHistory.clear();this.gapClock=null;this.gapBaseline=null;this.fixedScale=null;this.fixedPace=null;}
     this.lastLap=lap;
@@ -781,7 +798,9 @@ class F1RaceTrace extends HTMLElement {
       const duplicate=`<polyline points="${coords(1,averagePace)}" fill="none" stroke="${d.color}" stroke-width="2.5" stroke-dasharray="5 7" opacity=".8"/>`;
       const last=points.at(-1);
       const pitDots=points.filter(p=>p.pit).map(p=>`<rect x="${x(p.lap)-5}" y="${y(p.y)-5}" width="10" height="10" fill="#0b121d" stroke="${d.color}" stroke-width="2"/>`).join("");
-      return `${duplicate}${original}<circle cx="${x(last.lap)}" cy="${y(last.y)}" r="4" fill="${d.color}"/><text x="${Math.min(W-R+9,x(last.lap)+9)}" y="${y(last.y)+5}" fill="${d.color}" font-size="17" font-weight="700">${this.escape(d.label)}</text>${pitDots}`;
+      const dottedY=last.y+averagePace;
+      const dottedLabel=`<circle cx="${x(last.lap+1)}" cy="${y(dottedY)}" r="3" fill="${d.color}" opacity=".8"/><text x="${Math.min(W-R+9,x(last.lap+1)+9)}" y="${y(dottedY)+5}" fill="${d.color}" opacity=".8" font-size="15" font-weight="600">${this.escape(d.label)}</text>`;
+      return `${duplicate}${original}${dottedLabel}<circle cx="${x(last.lap)}" cy="${y(last.y)}" r="4" fill="${d.color}"/><text x="${Math.min(W-R+9,x(last.lap)+9)}" y="${y(last.y)+5}" fill="${d.color}" font-size="17" font-weight="700">${this.escape(d.label)}</text>${pitDots}`;
     }).join("");
     const opts=[{id:"AVERAGE",label:"Average race pace"},{id:"LEADER",label:"Race leader"},...drivers.map(d=>({id:d.id,label:d.label}))];
     this.shadowRoot.innerHTML=`<style>
