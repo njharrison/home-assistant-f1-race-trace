@@ -160,7 +160,7 @@ class F1RaceTrace extends HTMLElement {
     // Live gap-to-leader is only a relative offset. Add the leader's
     // cumulative pace deviation to give every car a common average baseline.
     // Only use consecutive known laps; missing laps cannot be invented.
-    const leaderLive=[...liveDrivers].sort((a,b)=>Number(a.current_position||999)-Number(b.current_position||999))[0];
+    const leaderLive=liveDrivers.find(d=>/^LAP\s+\d+$/i.test(String(d.gap_to_leader??"").trim())) || liveDrivers.find(d=>String(d.racing_number||d.tla)===drivers[0]?.id);
     const leaderTimes=new Map(Object.entries(leaderLive?.laps||{}).map(([k,v])=>[Number(k),this.seconds(v)]).filter(([k,v])=>Number.isInteger(k)&&v!==null));
     const leaderDeviation=new Map();
     let deviation=0,previous=null;
