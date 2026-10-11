@@ -527,12 +527,11 @@ class F1RaceTrace extends HTMLElement {
     for(const d of traces)d.points=d.points.filter(p=>Number.isFinite(p.y));
     const chartLap=Math.max(lap,...traces.flatMap(d=>d.points.map(p=>p.lap)).filter(Number.isFinite),1);
     const chartEnd=Math.max(lap+0.35,chartLap+0.1);
-    const values=traces.flatMap(d=>d.points.map(p=>p.y));
-    let low=Math.min(0,...values),high=Math.max(0,...values);
-    const margin=Math.max(3,(high-low)*.08);low-=margin;high+=margin;
-    if(!this.fixedScale)this.fixedScale={low,high};
-    else {this.fixedScale.low=Math.min(this.fixedScale.low,low);this.fixedScale.high=Math.max(this.fixedScale.high,high);}
-    ({low,high}=this.fixedScale);
+    // A fixed, symmetrical window spanning exactly one reference lap.
+    // Keep out-of-range data intact; the SVG plot clip hides it until
+    // lap-wrapping is enabled, without rescaling the Y axis.
+    const halfReferenceLap=Math.max(1,averagePace)/2;
+    const low=-halfReferenceLap,high=halfReferenceLap;
     const W=1400,H=720,L=78,R=110,T=40,B=60;
     const fullStart=1,fullEnd=Math.max(2,chartEnd);
     if(this.xWindow){
