@@ -755,30 +755,6 @@ class F1RaceTrace extends HTMLElement {
           hidden:this.hiddenDrivers.has(d.id)
         })));
       }
-      // The reference deviation is a function of measured leader distance
-      // and actual elapsed time, not the race-clock lap interpolation.
-      // Interpolate the leader's sector-based progress at each driver's
-      // sample timestamp so all drivers share the same reference.
-      const recordedLeader=[...rawHistory].find(([,rows])=>rows.some(o=>
-        /^LAP\\s+\\d+$/i.test(String(o.row.gap??"").trim())
-        &&String(o.row.position)==="1"))?.[0]||leaderId;
-      const leaderObservations=byId.get(recordedLeader)||[];
-      const leaderOrigin=leaderObservations[0];
-      const leaderAt=at=>{
-        if(!leaderOrigin||!Number.isFinite(at))return null;
-        let lo=0,hi=leaderObservations.length-1;
-        while(lo<hi){
-          const mid=Math.floor((lo+hi+1)/2);
-          if(leaderObservations[mid].at<=at)lo=mid;
-          else hi=mid-1;
-        }
-        const before=leaderObservations[lo],after=leaderObservations[lo+1];
-        if(!before)return null;
-        const progress=after&&after.at>before.at&&at>=before.at
-          ?before.lap+(after.lap-before.lap)*Math.min(1,(at-before.at)/(after.at-before.at))
-          :before.lap;
-        return (progress-leaderOrigin.lap)*averagePace-(at-leaderOrigin.at);
-      };
       // The recorder is the authoritative live clock. Derive the current
       // position from its latest observation, not a separate render timer.
       const currentRows=byLap.get(lap)||[];
@@ -794,8 +770,7 @@ class F1RaceTrace extends HTMLElement {
         const restored=[];
         for(const observation of observations){
           const x=observation.lap;
-          const leaderDeviation=leaderAt(observation.at);
-          const y=(leaderDeviation??baselineAt(observation.raceLap))-observation.gap;
+          const y=baselineAt(observation.raceLap)-observation.gap;
           // Retain identical X coordinates: they represent vertical timing
           // movement (a stopped car, pit loss, or a timing correction).
           restored.push({lap:x,y,estimated:true,gap:observation.gap,raceLap:observation.raceLap});
@@ -813,7 +788,7 @@ class F1RaceTrace extends HTMLElement {
         const lastRecordedRaceX=restored.at(-1)?.raceLap??-Infinity;
         const existing=this.gapTraceHistory.get(d.id);
         const liveTail=(existing?.points||[]).filter(p=>p.live&&(p.raceLap??p.lap)>lastRecordedRaceX+.0001)
-          .map(p=>({...p,y:(leaderAt(p.at)??baselineAt(p.raceLap??p.lap))-p.gap}));
+          .map(p=>({...p,y:baselineAt(p.raceLap??p.lap)-p.gap}));
         const points=[...restored,...liveTail];
         // When recording is fresh, its per-second snapshots already contain
         // the current gap. Never overwrite those with an older HA sensor.
