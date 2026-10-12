@@ -686,7 +686,7 @@ class F1RaceTrace extends HTMLElement {
           for(const event of events){
             if(seen.has(event.key))continue;
             seen.add(event.key);
-            milestones.push({at:obs.at,progress:event.progress});
+            milestones.push({at:obs.at,progress:event.progress,key:event.key});
           }
         }
         // Recover a missing S1 crossing when S2 is present. The S2
@@ -740,7 +740,9 @@ class F1RaceTrace extends HTMLElement {
         // They include the full pit loss even if S1/S2 are never reported.
         // Interpolating between line crossings avoids a false step when a
         // delayed sector event arrives during the pit stop.
-        const lapCrossings=crossings.filter(m=>Number.isInteger(m.progress));
+        const lapCrossings=milestones.filter(m=>m.key?.startsWith("lap:"))
+          .sort((a,b)=>a.at-b.at||a.progress-b.progress)
+          .filter((m,i,all)=>i===0||m.progress>all[i-1].progress);
         const lapProgressAt=at=>{
           if(lapCrossings.length<2)return null;
           let i=0;
