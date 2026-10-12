@@ -900,7 +900,10 @@ class F1RaceTrace extends HTMLElement {
         if(lapDeficit){
           const minimum=Number(lapDeficit[1])*averagePace;
           const prior=restored.at(-1)?.gap??this.gapTraceHistory.get(d.id)?.lastGap;
-          gap=Number.isFinite(prior)?Math.max(prior,minimum-averagePace*.5):minimum;
+          // A lap-down label is not a time measurement. When recorded
+          // crossings exist, never replace their gap with a one-lap
+          // estimate from the live sensor.
+          gap=Number.isFinite(prior)?prior:minimum;
         }
         const lastRecordedRaceX=restored.at(-1)?.raceLap??-Infinity;
         const existing=this.gapTraceHistory.get(d.id);
@@ -917,6 +920,16 @@ class F1RaceTrace extends HTMLElement {
           // Retain stationary samples; they produce genuine vertical traces.
           if(!previous||Math.abs(previous.raceLap-raceX)>.00001||Math.abs(previous.gap-gap)>.0001)
             points.push({lap:x,y:baselineAt(raceX)-gap,gap,raceLap:raceX,live:true,estimated:true});
+        }
+        if(this.config.debug&&["BOT","LIN","STR"].includes(d.label)){
+          const last=restored.at(-1);
+          const firstLapped=observations.findIndex(o=>o.gap>averagePace);
+          console.info("[F1 Race Trace] Lap-down timing",{
+            driver:d.label,firstLapped,recorded:restored.length,
+            lastRecorded:last?{raceLap:last.raceLap,gap:last.gap,x:last.lap,y:last.y}:null,
+            rawGap:rawGapText,liveGap:gap,
+            tail:points.slice(-5).map(p=>({raceLap:p.raceLap,gap:p.gap,x:p.lap,y:p.y,live:!!p.live}))
+          });
         }
         this.gapTraceHistory.set(d.id,{points,lastGap:gap,color:d.color});
         d.points=points.filter(p=>p.raceLap===undefined||p.raceLap<=lap);
