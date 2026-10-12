@@ -705,15 +705,29 @@ class F1RaceTrace extends HTMLElement {
             else if(!knownS2.has(lap))knownS2.set(lap,{at:obs.at,seconds});
           }
         }
+        const inferredS1=new Map();
         for(const [lap,s2] of knownS2){
           if(knownS1.has(lap)||!(s2.seconds>5&&s2.seconds<180))continue;
+          // A sector time is measured at the crossing, but the polling
+          // timestamp can be late. This gives an approximate S1 crossing.
           const inferredAt=s2.at-s2.seconds;
           const priorLap=milestones.find(m=>m.progress===lap-1);
-          // Never infer a sector crossing before the driver's previous
-          // confirmed lap boundary; stale sector data can arrive late.
+          const nextLap=milestones.find(m=>m.progress===lap);
           if(priorLap&&inferredAt<priorLap.at-3)continue;
+          if(nextLap&&inferredAt>=nextLap.at)continue;
+          // Recover the actual missing S1 duration, not merely its
+          // crossing: S1 ends at inferredAt and starts at the previous
+          // driver-specific start/finish crossing. Never use the race-wide
+          // leader lap boundary for another driver's sector duration.
+          let s1Duration=null;
+          if(priorLap){
+            const elapsed=inferredAt-priorLap.at;
+            if(elapsed>5&&elapsed<240)s1Duration=elapsed;
+          }
+          inferredS1.set(lap,{duration:s1Duration,at:inferredAt});
           milestones.push({at:inferredAt,
-            progress:lap-1+sectorBoundary[1],inferred:true});
+            progress:lap-1+sectorBoundary[1],inferred:true,
+            sectorDuration:s1Duration});
         }
         milestones.sort((a,b)=>a.at-b.at||a.progress-b.progress);
         // Ignore stale or out-of-order sector readings. A checkpoint must
@@ -773,7 +787,10 @@ class F1RaceTrace extends HTMLElement {
           // Use the established race-clock/gap X mapping until sector
           // crossings and baseline share a verified coordinate origin.
           const driverX=advanceX(previous,plottedX(obs.raceX,gap));
-          history.push({lap:driverX,raceLap:obs.raceX,gap,at:obs.at});
+          const currentLap=Number(obs.row.completed_laps)||0;
+          const recoveredS1=inferredS1.get(currentLap+1);
+          history.push({lap:driverX,raceLap:obs.raceX,gap,at:obs.at,
+            inferredS1Seconds:recoveredS1?.duration??null});
         }
         byId.set(id,history);
       }
