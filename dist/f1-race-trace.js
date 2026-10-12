@@ -666,6 +666,16 @@ class F1RaceTrace extends HTMLElement {
           }
         }
       }
+      // Same-numbered start/finish crossings are directly comparable in
+      // elapsed race time, even after the feed switches to "1 L".
+      const leaderCrossingAt=new Map();
+      for(const rows of rawHistory.values())for(const obs of rows){
+        if(!/^LAP\\s+\\d+$/i.test(String(obs.row.gap??"").trim()))continue;
+        const completed=Number(obs.row.completed_laps);
+        if(Number.isInteger(completed)&&completed>0
+          &&(!leaderCrossingAt.has(completed)||obs.at<leaderCrossingAt.get(completed)))
+          leaderCrossingAt.set(completed,obs.at);
+      }
       for(const [id,rows] of rawHistory){
         rows.sort((a,b)=>a.at-b.at);
         // Independently reconstruct the driver's progress from timing
@@ -743,6 +753,22 @@ class F1RaceTrace extends HTMLElement {
         const lapCrossings=milestones.filter(m=>m.key?.startsWith("lap:"))
           .sort((a,b)=>a.at-b.at||a.progress-b.progress)
           .filter((m,i,all)=>i===0||m.progress>all[i-1].progress);
+        // An actual crossing of lap N gives a measured cumulative gap:
+        // driver's timestamp at N minus leader's timestamp at N.
+        // This retains all pit-lane loss, irrespective of missing sectors.
+        const timedLapGaps=lapCrossings.map(m=>({
+          at:m.at,gap:leaderCrossingAt.has(m.progress)
+            ?m.at-leaderCrossingAt.get(m.progress):null
+        })).filter(m=>Number.isFinite(m.gap)&&m.gap>=0);
+        const crossingGapAt=at=>{
+          if(!timedLapGaps.length)return null;
+          let next=timedLapGaps.findIndex(m=>m.at>=at);
+          if(next<0)next=timedLapGaps.length;
+          const before=timedLapGaps[next-1],after=timedLapGaps[next];
+          if(before&&after&&after.at>before.at)
+            return before.gap+(after.gap-before.gap)*(at-before.at)/(after.at-before.at);
+          return before?.gap??after?.gap??null;
+        };
         const lapProgressAt=at=>{
           if(lapCrossings.length<2)return null;
           let i=0;
@@ -793,14 +819,12 @@ class F1RaceTrace extends HTMLElement {
             // sector timeline only when the feed actually reports seconds.
             if(Number.isFinite(progress))anchor={at:obs.at,progress,gap:measuredGap};
           }else if(lapDeficit){
-            // A lap-down marker contains no seconds. Reconstruct the time
-            // deficit from actual line-crossing intervals, not sector polling
-            // events (which are often absent during a pit out-lap).
-            const atProgress=lapProgressAt(obs.at);
-            const anchorProgress=anchor?lapProgressAt(anchor.at):null;
-            if(anchor&&atProgress!==null&&anchorProgress!==null){
-              gap=Math.max(0,anchor.gap+(obs.at-anchor.at)
-                -(atProgress-anchorProgress)*averagePace);
+            // Do not turn a lap count into seconds. Reconstruct the gap
+            // from the driver's and leader's SAME-numbered line crossings.
+            // Unlike sector polling this captures the entire pit-stop loss.
+            const timedGap=crossingGapAt(obs.at);
+            if(timedGap!==null){
+              gap=timedGap;
             }else if(anchor){
               gap=anchor.gap;
             }else{
