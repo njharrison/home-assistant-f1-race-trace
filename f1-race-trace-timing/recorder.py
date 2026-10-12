@@ -96,6 +96,7 @@ def record(options):
                     "id": str(d.get("racing_number") or d.get("tla") or ""),
                     "tla": d.get("tla"),
                     "gap": d.get("gap_to_leader"),
+                    "status": d.get("status") or d.get("driver_status") or d.get("race_status"),
                     "position": d.get("current_position"),
                     "completed_laps": d.get("completed_laps"),
                     "sector_state": d.get("sector_state"),
