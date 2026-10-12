@@ -767,6 +767,19 @@ class F1RaceTrace extends HTMLElement {
           const before=timedLapGaps[next-1],after=timedLapGaps[next];
           if(before&&after&&after.at>before.at)
             return before.gap+(after.gap-before.gap)*(at-before.at)/(after.at-before.at);
+          // After the final completed crossing, holding the last gap
+          // constant makes a lapped driver's trace mirror the leader's
+          // lap-time variations. Carry forward the measured gap trend
+          // from the last two crossings, for at most one lap.
+          if(before&&next>=timedLapGaps.length&&timedLapGaps.length>=2){
+            const prior=timedLapGaps[timedLapGaps.length-2];
+            const elapsed=before.at-prior.at;
+            if(elapsed>0){
+              const forward=Math.max(0,Math.min(at-before.at,elapsed));
+              return Math.max(0,before.gap+
+                (before.gap-prior.gap)*forward/elapsed);
+            }
+          }
           return before?.gap??after?.gap??null;
         };
         const lapProgressAt=at=>{
