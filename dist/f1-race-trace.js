@@ -736,6 +736,25 @@ class F1RaceTrace extends HTMLElement {
         for(const event of milestones)
           if(!crossings.length||event.progress>crossings.at(-1).progress+0.00001)
             crossings.push(event);
+        // For lap-down gaps, use actual completed-lap crossing intervals.
+        // They include the full pit loss even if S1/S2 are never reported.
+        // Interpolating between line crossings avoids a false step when a
+        // delayed sector event arrives during the pit stop.
+        const lapCrossings=crossings.filter(m=>Number.isInteger(m.progress));
+        const lapProgressAt=at=>{
+          if(lapCrossings.length<2)return null;
+          let i=0;
+          while(i+1<lapCrossings.length&&lapCrossings[i+1].at<=at)i++;
+          const before=lapCrossings[i],after=lapCrossings[i+1];
+          if(before&&after&&after.at>before.at)
+            return before.progress+(at-before.at)*(after.progress-before.progress)/(after.at-before.at);
+          if(i>0){
+            const prev=lapCrossings[i-1];
+            if(before.at>prev.at)
+              return before.progress+(at-before.at)*(before.progress-prev.progress)/(before.at-prev.at);
+          }
+          return null;
+        };
         let eventIndex=0,anchor=null;
         const history=[];
         for(const obs of rows){
@@ -772,26 +791,14 @@ class F1RaceTrace extends HTMLElement {
             // sector timeline only when the feed actually reports seconds.
             if(Number.isFinite(progress))anchor={at:obs.at,progress,gap:measuredGap};
           }else if(lapDeficit){
-            // "1 L" is a lap-count label, not a new measured time gap.
-            // Keep the last measured seconds gap continuous at the changeover.
-            // Sector milestones are polling snapshots and can jump by a whole
-            // sector when received late; applying that jump to gap would create
-            // a fictitious 30-second recovery or loss.
-            const previous=history.at(-1);
-            if(previous&&Number.isFinite(previous.gap)){
-              const elapsed=Math.max(0,obs.at-previous.at);
-              const projected=anchor&&Number.isFinite(progress)
-                ?anchor.gap+(obs.at-anchor.at)
-                  -(progress-anchor.progress)*averagePace:null;
-              // Only accept progress-derived movement when it is physically
-              // plausible over the time since the last plotted observation.
-              // Otherwise retain the last gap until another reliable timing
-              // measurement becomes available.
-              const maxChange=Math.max(.15,elapsed*.25);
-              gap=Number.isFinite(projected)
-                ?Math.max(0,previous.gap+Math.max(-maxChange,
-                    Math.min(maxChange,projected-previous.gap)))
-                :previous.gap;
+            // A lap-down marker contains no seconds. Reconstruct the time
+            // deficit from actual line-crossing intervals, not sector polling
+            // events (which are often absent during a pit out-lap).
+            const atProgress=lapProgressAt(obs.at);
+            const anchorProgress=anchor?lapProgressAt(anchor.at):null;
+            if(anchor&&atProgress!==null&&anchorProgress!==null){
+              gap=Math.max(0,anchor.gap+(obs.at-anchor.at)
+                -(atProgress-anchorProgress)*averagePace);
             }else if(anchor){
               gap=anchor.gap;
             }else{
