@@ -670,7 +670,7 @@ class F1RaceTrace extends HTMLElement {
       // elapsed race time, even after the feed switches to "1 L".
       const leaderCrossingAt=new Map();
       for(const rows of rawHistory.values())for(const obs of rows){
-        if(!/^LAP\\s+\\d+$/i.test(String(obs.row.gap??"").trim()))continue;
+        if(!/^LAP\s+\d+$/i.test(String(obs.row.gap??"").trim()))continue;
         const completed=Number(obs.row.completed_laps);
         if(Number.isInteger(completed)&&completed>0
           &&(!leaderCrossingAt.has(completed)||obs.at<leaderCrossingAt.get(completed)))
