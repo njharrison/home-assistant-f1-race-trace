@@ -623,8 +623,9 @@ class F1RaceTrace extends HTMLElement {
         sectorFractions[0]+sectorFractions[1],1];
       // Collect all observations before reconstruction so sector transitions
       // can be interpolated using the actual recorded timestamps.
-      const isOut=row=>/^(OUT|RETIRED|RET|DNF)$/i.test(
-        String(row?.status??row?.driver_status??row?.race_status??row?.gap??"").trim());
+      const isOut=row=>[row?.status,row?.driver_status,row?.race_status,
+        row?.gap,row?.gap_to_leader].some(value=>
+          /^(OUT|RETIRED|RET|DNF)$/i.test(String(value??"").trim()));
       const outAt=new Map();
       const rawHistory=new Map();
       for(const n of lapsSorted){
