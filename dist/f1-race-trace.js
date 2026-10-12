@@ -825,7 +825,15 @@ class F1RaceTrace extends HTMLElement {
     // Keep out-of-range data intact; the SVG plot clip hides it until
     // lap-wrapping is enabled, without rescaling the Y axis.
     const halfReferenceLap=Math.max(1,averagePace)/2;
-    const defaultLow=-halfReferenceLap,defaultHigh=halfReferenceLap;
+    // A one-lap Y viewport limits zoom span, not the absolute Y
+    // position. Accumulated race time loss can be many laps below zero.
+    // Centre the default/reset viewport on the latest visible traces
+    // instead of permanently pinning it to zero.
+    const visibleEnds=traces.map(d=>d.points.at(-1)?.y)
+      .filter(Number.isFinite).sort((a,b)=>a-b);
+    const centre=visibleEnds.length
+      ?visibleEnds[Math.floor(visibleEnds.length/2)]:0;
+    const defaultLow=centre-halfReferenceLap,defaultHigh=centre+halfReferenceLap;
     const low=this.yWindow?.low??defaultLow;
     const high=this.yWindow?.high??defaultHigh;
     const W=1400,H=720,L=78,R=110,T=40,B=60;
