@@ -1,5 +1,5 @@
 name: F1 Race Trace Timing
-version: "0.3.8"
+version: "0.3.9"
 slug: f1_race_trace_timing
 description: Historical lap timing export and persistent live gap recorder for F1 Race Trace
 url: https://github.com/njharrison/home-assistant-f1-race-trace
@@ -21,6 +21,8 @@ options:
   event: Japanese Grand Prix
   session: R
   record_live: true
+  record_gps: false
+  track_map_entry_id: ""
   driver_entity: sensor.f1_drivers_driver_positions
   lap_entity: sensor.f1_race_lap_count
   race_control_entity: sensor.f1_officials_race_control
@@ -30,6 +32,8 @@ schema:
   event: str
   session: str
   record_live: bool
+  record_gps: bool
+  track_map_entry_id: str
   driver_entity: str
   lap_entity: str
   race_control_entity: str
