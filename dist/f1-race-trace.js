@@ -736,7 +736,13 @@ class F1RaceTrace extends HTMLElement {
           // observation. Switching from race-clock X at lap two caused
           // the earlier staircase artefact. Keep X monotonic to avoid
           // backwards movement on timing corrections.
-          const driverX=advanceX(previous,plottedX(obs.raceX,gap));
+          // Spatial X is derived from actual timing-line/sector crossings,
+          // not from the race-clock lap fraction. This follows slow VSC
+          // sectors and stops advancing a retired car once its last
+          // confirmed checkpoint has been extrapolated by one sector.
+          // The gap is still used for Y, never subtracted a second time.
+          const spatialX=Number.isFinite(progress)?progress:plottedX(obs.raceX,gap);
+          const driverX=advanceX(previous,spatialX);
           history.push({lap:driverX,raceLap:obs.raceX,gap,at:obs.at});
         }
         byId.set(id,history);
