@@ -771,12 +771,35 @@ class F1RaceTrace extends HTMLElement {
             // Measured gaps are authoritative. Re-anchor the independent
             // sector timeline only when the feed actually reports seconds.
             if(Number.isFinite(progress))anchor={at:obs.at,progress,gap:measuredGap};
-          }else if(anchor&&Number.isFinite(progress)&&(lapDeficit||!gapText)){
+          }else if(lapDeficit){
+            // "1 L" is a lap-count label, not a new measured time gap.
+            // Keep the last measured seconds gap continuous at the changeover.
+            // Sector milestones are polling snapshots and can jump by a whole
+            // sector when received late; applying that jump to gap would create
+            // a fictitious 30-second recovery or loss.
+            const previous=history.at(-1);
+            if(previous&&Number.isFinite(previous.gap)){
+              const elapsed=Math.max(0,obs.at-previous.at);
+              const projected=anchor&&Number.isFinite(progress)
+                ?anchor.gap+(obs.at-anchor.at)
+                  -(progress-anchor.progress)*averagePace:null;
+              // Only accept progress-derived movement when it is physically
+              // plausible over the time since the last plotted observation.
+              // Otherwise retain the last gap until another reliable timing
+              // measurement becomes available.
+              const maxChange=Math.max(.15,elapsed*.25);
+              gap=Number.isFinite(projected)
+                ?Math.max(0,previous.gap+Math.max(-maxChange,
+                    Math.min(maxChange,projected-previous.gap)))
+                :previous.gap;
+            }else if(anchor){
+              gap=anchor.gap;
+            }else{
+              gap=Number(lapDeficit[1])*averagePace;
+            }
+          }else if(anchor&&Number.isFinite(progress)&&!gapText){
             gap=Math.max(0,anchor.gap+(obs.at-anchor.at)
               -(progress-anchor.progress)*averagePace);
-          }else if(lapDeficit&&!anchor){
-            gap=Number(lapDeficit[1])*averagePace;
-            if(Number.isFinite(progress))anchor={at:obs.at,progress,gap};
           }
           if(gap===null)continue;
           const previous=history.at(-1);
