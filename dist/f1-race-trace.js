@@ -623,6 +623,9 @@ class F1RaceTrace extends HTMLElement {
         sectorFractions[0]+sectorFractions[1],1];
       // Collect all observations before reconstruction so sector transitions
       // can be interpolated using the actual recorded timestamps.
+      const isOut=row=>/^(OUT|RETIRED|RET|DNF)$/i.test(
+        String(row?.status??row?.driver_status??row?.race_status??row?.gap??"").trim());
+      const outAt=new Map();
       const rawHistory=new Map();
       for(const n of lapsSorted){
         const rows=byLap.get(n);
@@ -642,6 +645,10 @@ class F1RaceTrace extends HTMLElement {
           const raceX=Math.max(1,n-1+Math.min(.999,elapsed/Math.max(1,duration)));
           for(const row of sample.drivers||[]){
             const id=String(row.id);
+            // Stop at the first explicit OUT update, preserving the
+            // pre-retirement trace but never plotting the OUT snapshot.
+            if(isOut(row)&&!outAt.has(id))outAt.set(id,at);
+            if(outAt.has(id)&&at>=outAt.get(id))continue;
             if(!rawHistory.has(id))rawHistory.set(id,[]);
             const completed=Number(row.completed_laps)||0;
             // Each sector's own *_lap field identifies the lap it
@@ -772,6 +779,7 @@ class F1RaceTrace extends HTMLElement {
           restored.push({lap:x,y,estimated:true,gap:observation.gap,raceLap:observation.raceLap});
         }
         const raw=rawById.get(d.id);
+        const retiredNow=isOut(raw)||outAt.has(d.id);
         const rawGapText=String(raw?.gap_to_leader??"").trim();
         const isLeader=d.id===leaderId||/^LAP\s+\d+$/i.test(rawGapText);
         const lapDeficit=rawGapText.match(/^\+?\s*(\d+)\s+L(?:AP(?:S)?)?$/i);
@@ -783,12 +791,12 @@ class F1RaceTrace extends HTMLElement {
         }
         const lastRecordedRaceX=restored.at(-1)?.raceLap??-Infinity;
         const existing=this.gapTraceHistory.get(d.id);
-        const liveTail=(existing?.points||[]).filter(p=>p.live&&(p.raceLap??p.lap)>lastRecordedRaceX+.0001)
+        const liveTail=(retiredNow?[]:(existing?.points||[])).filter(p=>p.live&&(p.raceLap??p.lap)>lastRecordedRaceX+.0001)
           .map(p=>({...p,y:baselineAt(p.raceLap??p.lap)-p.gap}));
         const points=[...restored,...liveTail];
         // When recording is fresh, its per-second snapshots already contain
         // the current gap. Never overwrite those with an older HA sensor.
-        if(gap!==null&&!recorderFresh){
+        if(!retiredNow&&gap!==null&&!recorderFresh){
           const raceX=recorderX??liveX;
           const previous=points.at(-1);
           // Match the spatial X mapping used for persisted observations.
