@@ -689,6 +689,32 @@ class F1RaceTrace extends HTMLElement {
             milestones.push({at:obs.at,progress:event.progress});
           }
         }
+        // Recover a missing S1 crossing when S2 is present. The S2
+        // duration is the elapsed time *between* the two timing lines,
+        // so its first observed timestamp provides an S1 timestamp.
+        // This is especially useful on laps where the timing feed omits
+        // S1 (e.g. after pit exit or during a neutralisation).
+        // Do not manufacture a sector duration or replace real crossings.
+        const knownS1=new Set(),knownS2=new Map();
+        for(const obs of rows){
+          for(const k of [1,2]){
+            const lap=Number(obs.row["sector_"+k+"_lap"]);
+            const seconds=this.seconds(obs.row["sector_"+k]);
+            if(!Number.isInteger(lap)||lap<1||seconds===null)continue;
+            if(k===1)knownS1.add(lap);
+            else if(!knownS2.has(lap))knownS2.set(lap,{at:obs.at,seconds});
+          }
+        }
+        for(const [lap,s2] of knownS2){
+          if(knownS1.has(lap)||!(s2.seconds>5&&s2.seconds<180))continue;
+          const inferredAt=s2.at-s2.seconds;
+          const priorLap=milestones.find(m=>m.progress===lap-1);
+          // Never infer a sector crossing before the driver's previous
+          // confirmed lap boundary; stale sector data can arrive late.
+          if(priorLap&&inferredAt<priorLap.at-3)continue;
+          milestones.push({at:inferredAt,
+            progress:lap-1+sectorBoundary[1],inferred:true});
+        }
         milestones.sort((a,b)=>a.at-b.at||a.progress-b.progress);
         // Ignore stale or out-of-order sector readings. A checkpoint must
         // represent strictly increasing distance.
