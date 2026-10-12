@@ -565,10 +565,14 @@ class F1RaceTrace extends HTMLElement {
       const deviationByLap=new Map([[1,0]]);
       let cumulativeDeviation=0;
       for(let n=2;n<=lap+1;n++){
-        const t0=startByLap.get(n),t1=startByLap.get(n+1);
+        // x=n is the START of the interval from lap n+1 to n+2.
+        // Store the correction accumulated BEFORE that interval.
+        // Previously the current interval was added first, causing a
+        // discontinuous step at every integer X coordinate.
+        deviationByLap.set(n,cumulativeDeviation);
+        const t0=startByLap.get(n+1),t1=startByLap.get(n+2);
         if(t0!==undefined&&t1!==undefined&&t1>t0)
           cumulativeDeviation+=averagePace-(t1-t0);
-        deviationByLap.set(n,cumulativeDeviation);
       }
       const baselineAt=x=>{
         const whole=Math.max(1,Math.floor(x));
