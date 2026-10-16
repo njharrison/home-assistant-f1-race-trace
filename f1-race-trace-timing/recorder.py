@@ -53,7 +53,16 @@ def record(options):
         try:
             driver_state = get_state(session, driver_entity)
             lap_state = get_state(session, lap_entity)
-            lap = int(float(lap_state.get("state", "0")))
+            lap_value = lap_state.get("state")
+            try:
+                lap = int(float(lap_value))
+            except (ValueError, TypeError, OverflowError):
+                # Unavailable between sessions: wait without logging or resetting.
+                time.sleep(1)
+                continue
+            if lap < 1:
+                time.sleep(1)
+                continue
             if last_lap is not None and lap < last_lap:
                 recording = {"schema_version": 1, "source": "F1 Sensor",
                              "run": recording["run"] + 1, "samples": [], "race_control": []}
