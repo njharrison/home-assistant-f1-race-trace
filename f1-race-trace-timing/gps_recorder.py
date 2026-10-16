@@ -30,7 +30,9 @@ def record_gps(options):
         return
     entry_id = str(options.get("track_map_entry_id") or "").strip()
     document = {"schema_version": 1, "source": "F1 Sensor Track Map",
-                "run": 1, "geometry": None, "samples": []}
+                "run": 1, "geometry": None, "samples": [],
+                "recorded_at_clock": "unix_epoch_utc",
+                "timestamp_clock": "f1_session"}
     previous_time = None
     previous_signature = None
     last_write = 0.0
@@ -52,7 +54,9 @@ def record_gps(options):
             ws.send(json.dumps(command))
             LOG.info("Track Map GPS subscription requested")
             while True:
-                message = json.loads(ws.recv())
+                raw_message = ws.recv()
+                received_at = round(time.time(), 3)
+                message = json.loads(raw_message)
                 if message.get("type") == "result" and not message.get("success", True):
                     raise RuntimeError("Track Map subscription: " + str(message.get("error")))
                 if message.get("type") != "event" or message.get("id") != 1:
@@ -72,7 +76,9 @@ def record_gps(options):
                     continue
                 if previous_time is not None and instant < previous_time - 5:
                     document = {"schema_version": 1, "source": "F1 Sensor Track Map",
-                                "run": document["run"] + 1, "geometry": None, "samples": []}
+                                "run": document["run"] + 1, "geometry": None, "samples": [],
+                                "recorded_at_clock": "unix_epoch_utc",
+                                "timestamp_clock": "f1_session"}
                     previous_signature = None
                     LOG.info("GPS replay rewind: run %s", document["run"])
                 previous_time = instant
@@ -96,7 +102,14 @@ def record_gps(options):
                     continue
                 signature = json.dumps([instant, compact], sort_keys=True)
                 if signature != previous_signature:
-                    document["samples"].append({"timestamp": instant, "drivers": compact})
+                    document["samples"].append({
+                        "timestamp": instant,  # Original race/session time (legacy field).
+                        "recorded_at": received_at,  # HA wall clock, shared with timing recorder.
+                        "replay_state": snapshot.get("replay_state"),
+                        "stream_timestamp": snapshot.get("stream_timestamp"),
+                        "position_timestamp": snapshot.get("position_timestamp"),
+                        "drivers": compact,
+                    })
                     previous_signature = signature
                 if time.monotonic() - last_write >= 2:
                     _save(document)
