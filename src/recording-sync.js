@@ -25,7 +25,7 @@ function gpsFrames(recording){
  if(recording?.schema_version!==1||!Array.isArray(recording.samples))throw Error('Invalid GPS recording');
  return recording.samples.filter(s=>Number.isFinite(s.recorded_at)).map(s=>({
   t:s.recorded_at,
-  d:(s.drivers||[]).filter(d=>d&&Number.isFinite(d.x)&&Number.isFinite(d.y))
+  d:(s.drivers||[]).filter(d=>d&&Number.isFinite(d.x)&&Number.isFinite(d.y)&&!(d.x===0&&d.y===0))
     .map(d=>[String(d.id),d.x,d.y])
  }));
 }
