@@ -21,7 +21,21 @@ function match(projected,official,{toleranceSeconds=45,pitIntervals=null,pitMarg
   }
   else unmatched.push({driver:String(driver),lap,time});
  }
- return {matched,unmatched};
+ const surplus=[];
+ for(const [driver,points] of projected){
+  const driverEvents=official.filter(e=>String(e[0])===String(driver));
+  const first=Math.min(...driverEvents.map(e=>e[2]));
+  const last=Math.max(...driverEvents.map(e=>e[2]));
+  const claimed=used.get(String(driver))||new Set();
+  for(const p of points){
+   if(claimed.has(p))continue;
+   const classification=!driverEvents.length?'no_official_timing':
+     p.time<first?'before_first_official_lap':
+     p.time>last?'after_last_official_lap':'unmatched_within_timing';
+   surplus.push({driver:String(driver),time:p.time,classification});
+  }
+ }
+ return {matched,unmatched,surplus};
 }
 root.RaceTraceLapMatching=Object.freeze({match});
 if(typeof module!=='undefined'&&module.exports)module.exports=root.RaceTraceLapMatching;
