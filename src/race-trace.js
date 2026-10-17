@@ -40,6 +40,11 @@ const raceStart=Math.max(0,Math.min(...Object.values(lap2Anchors))-110);
 let anchoredDrivers=0,unanchoredDrivers=[];
 function alignRaceLaps(){
 anchoredDrivers=0;unanchoredDrivers=[];
+if(globalThis.RACE_TRACE_EXPERIMENTAL_ALIGNMENT===true){
+ const report=RaceTraceOfficialAlignment.align(tracks,(globalThis.RaceTraceTimingSource || TIMING).lapCrossings);
+ anchoredDrivers=report.aligned.length;unanchoredDrivers=report.missing;
+ return;
+}
 for(const [id,arr] of tracks){
  const anchor=lap2Anchors[id];if(!Number.isFinite(anchor)){unanchoredDrivers.push(id);continue;}
  const crossings=[];
