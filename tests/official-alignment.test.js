@@ -22,3 +22,19 @@ test('missing official timing leaves the driver unchanged',()=>{
  assert.equal(report.missing.length,1);
  assert.equal(tracks.get('5')[0][1],0.2);
 });
+
+test('pit shortcut and VSC pauses do not change the official lap anchor',()=>{
+ const tracks=new Map([
+  ['63',[[0,0.1,0],[1,0.95,8],[2,1.02,10],[3,1.06,25],[4,1.4,40]]],
+  ['44',[[0,0.2,0],[1,0.6,8],[2,0.61,10],[3,0.62,25],[4,1.1,40]]]
+ ]);
+ const before=new Map([...tracks].map(([id,p])=>[id,p.map(x=>x[1])]));
+ const report=ctx.RaceTraceOfficialAlignment.align(tracks,[['63',2,30],['44',2,30]]);
+ assert.equal(report.aligned.length,2);
+ for(const [id,points] of tracks){
+  const shift=points[0][1]-before.get(id)[0];
+  for(let i=0;i<points.length;i++)assert.ok(Math.abs(points[i][1]-before.get(id)[i]-shift)<1e-9);
+  const fraction=(30-25)/(40-25);
+  assert.ok(Math.abs(points[3][1]+fraction*(points[4][1]-points[3][1])-1)<1e-9);
+ }
+});
