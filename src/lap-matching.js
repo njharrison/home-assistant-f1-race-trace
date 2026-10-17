@@ -4,16 +4,21 @@
 (function(root){
 'use strict';
 function match(projected,official,{toleranceSeconds=45,pitIntervals=null,pitMargin=2}={}){
- const matched=[],unmatched=[];
+ const matched=[],unmatched=[],used=new Map();
  for(const [driver,lap,time] of official){
   const points=projected.get(String(driver))||[];
   let nearest=null;
+  const claimed=used.get(String(driver))||new Set();
   for(const p of points){
    const error=Math.abs(p.time-time);
-   if(error<=toleranceSeconds&&(!nearest||error<nearest.error))
+   if(!claimed.has(p)&&error<=toleranceSeconds&&(!nearest||error<nearest.error))
     nearest={driver:String(driver),lap,time,projectedTime:p.time,error,pit:!!(pitIntervals&&root.RaceTracePitLane.flagged(pitIntervals,driver,p.time,{margin:pitMargin}))};
   }
-  if(nearest)matched.push(nearest);
+  if(nearest){
+   const chosen=points.find(p=>p.time===nearest.projectedTime&&!claimed.has(p));
+   if(chosen){claimed.add(chosen);used.set(String(driver),claimed);}
+   matched.push(nearest);
+  }
   else unmatched.push({driver:String(driver),lap,time});
  }
  return {matched,unmatched};
