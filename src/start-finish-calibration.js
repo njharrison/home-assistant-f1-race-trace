@@ -38,11 +38,12 @@ function calibrate(geometry,frames,lapCrossings,{windowSeconds=3}={}){
  const cutoff=Math.max(medianDeviation*3,geometry.length*0.002);
  const accepted=candidates.filter(c=>Math.abs(circularDelta(c.distance,centre))<=cutoff);
  const acceptedDrivers=new Set(accepted.map(c=>c.driver)).size;
- const confidence=acceptedDrivers>=3&&accepted.length>=6&&concentration>=0.98&&
+ const acceptedConcentration=Math.hypot(...[accepted.reduce((n,c)=>n+Math.sin(2*Math.PI*c.distance/geometry.length),0),accepted.reduce((n,c)=>n+Math.cos(2*Math.PI*c.distance/geometry.length),0)])/accepted.length;
+ const confidence=acceptedDrivers>=3&&accepted.length>=6&&acceptedConcentration>=0.98&&
    medianDeviation<=geometry.length*0.02;
  return {distance:centre,concentration,count:candidates.length,
    acceptedCount:accepted.length,driverCount:acceptedDrivers,
-   medianDeviation,confidence,candidates};
+   medianDeviation,acceptedConcentration,confidence,candidates};
 }
 root.RaceTraceCalibration=Object.freeze({calibrate});
 if(typeof module!=='undefined'&&module.exports)module.exports=root.RaceTraceCalibration;
