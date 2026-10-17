@@ -1,0 +1,23 @@
+name: Singapore Race Trace regression tests
+on:
+  push:
+    branches:
+      - dev/shared-race-trace-engine
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'fixtures/**'
+      - 'tests/**'
+      - 'golden/**'
+      - 'package.json'
+      - '.github/workflows/race-trace-tests.yml'
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run numerical regression suite
+        run: npm test
