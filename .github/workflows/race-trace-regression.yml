@@ -1,0 +1,18 @@
+name: Race Trace regression
+on:
+  push:
+    branches:
+      - dev/shared-race-trace-engine
+  pull_request:
+  workflow_dispatch:
+jobs:
+  singapore-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run recorded Singapore regression suite
+        run: npm test
