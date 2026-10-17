@@ -33,3 +33,22 @@ The URLs above are examples, **not proof** that your recorder publishes GPS at t
 This prototype polls both complete files every five seconds, which is inefficient for long races. Avoid leaving it running continuously until incremental updates are implemented. It also uses simple centreline projection; it is not yet the trajectory-normal projection of the approved Singapore browser preview.
 
 Do not publish private recordings or credentials in a public GitHub repository. Home Assistant's `/local/` assets are served without authentication.
+
+## HACS packaging status
+
+The single-file experimental build is available at `dist/f1-race-trace-experimental.js`.
+It embeds all four shared modules, so **do not install the multi-file prototype and
+standalone bundle together**.
+
+**Important:** The existing repository's `hacs.json` names
+`f1-race-trace.js` as the frontend file. HACS therefore will **not**
+automatically install or update `f1-race-trace-experimental.js` from this
+development branch. A proper HACS distribution requires either a separate
+experimental repository registered as a custom HACS repository, or an
+intentionally updated default-branch distribution that includes both custom
+elements in the existing HACS-managed resource. Neither has been published yet.
+
+For a temporary manual test, place the single bundled file in
+`/config/www/f1-race-trace-experimental.js`, add a JavaScript module resource
+at `/local/f1-race-trace-experimental.js?v=1`, and use the YAML card below.
+Do not remove the existing HACS resource or production card.
