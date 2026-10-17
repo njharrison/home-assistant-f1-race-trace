@@ -1,112 +1,45 @@
-# F1 Race Trace for Home Assistant
+# F1 Race Trace — Singapore development sandbox
 
-Full-screen F1 timing visualisation and historical FastF1 timing exporter for Home Assistant OS.
+This development branch contains the recorded **2026 Singapore Grand Prix** GPS/timing fixture, the extracted offline Race Trace engine, numerical regression tests and the preserved visual baseline. It does **not** replace the production Home Assistant card.
 
-> Early development prototype. The chart and timing exporter are not yet connected; historical gaps are not yet fully reconstructed.
+## Test the calculations
 
-## Components
+Requires Node.js 22 or later; no npm installation needed:
 
-- `dist/f1-race-trace.js`: custom Lovelace Race Trace card (in development)
-- `f1-race-trace-timing/`: Home Assistant OS local app exporting archived lap timing from FastF1
-
-## Roadmap
-
-- Historical lap-by-lap trace independent of replay seeking
-- Accurate gap alignment and explicit estimates
-- Driver selection, labels, pit stops, SC/VSC periods
-- HACS card distribution and Home Assistant app repository installation
-
-## Existing dashboard card configuration
-
-```yaml
-type: custom:f1-race-trace
-entity: sensor.f1_drivers_driver_positions
-lap_entity: sensor.f1_race_lap_count
-height: 85vh
+```sh
+npm test
 ```
 
-This project is independent of [Nicxe/f1_sensor](https://github.com/Nicxe/f1_sensor).
+The seven tests cover GPS projection continuity, reference-profile behaviour, retirement handling, timing-derived lap anchors, data-source validation, and the **22-driver Singapore numerical golden master**. A failure in the golden-master test indicates the calculated trace changed. Inspect differences before intentionally updating the baseline.
 
-## Persistent live recording (add-on v0.3.0)
+The timing-based lap anchors are derived from `fixtures/singapore-timing.js`. They reproduce all 22 original hard-coded Singapore lap-two anchors. The current geometry still includes circuit-specific start/finish calibration and a special pit-lane exception for car 63; these need generalising before live use at other circuits.
 
-The F1 Race Trace Timing add-on now runs a background recorder independently of
-the Lovelace card. Install/rebuild the updated local add-on, set
-`record_live: true`, and **start** the add-on. Its boot mode is automatic.
+## Local visual preview
 
-It polls the Home Assistant F1 driver and lap sensors using the Supervisor
-API, saving timestamped gaps and sector state changes atomically to
-`/config/www/f1-race-trace/live-recording.json`. The file is accessible at
-`/local/f1-race-trace/live-recording.json`.
-
-The card automatically reloads this recording every five seconds while open,
-restoring observations collected while it was closed. You may override the URL:
-
-```yaml
-type: custom:f1-race-trace
-entity: sensor.f1_drivers_driver_positions
-lap_entity: sensor.f1_race_lap_count
-recording_url: /local/f1-race-trace/live-recording.json
+```sh
+npm install
+npm run dev
 ```
 
-Set `recording_url: false` to disable retrieval. The legacy timing engine
-does not consume recorded gap observations.
+Open the Vite URL and visit `/dev/` if needed. `dev/index.html` loads the shared source files in order. Compare the preview with `baseline.html`, the preserved known-good offline version. **Pixel-perfect rendering has not been automatically verified.**
 
-**Caveats:** Replay rewind (a decreasing lap counter) starts a fresh recording;
-it overwrites the previous run's live file. The recorder captures changes seen
-by the Home Assistant sensor, not the original sub-second F1 feed. Its storage
-is an accumulating JSON document, so long sessions may grow large. The archive
-exporter is still a separate, one-time FastF1 operation.
+## Project structure
 
+- `src/gps-projection.js`: trajectory-normal and nearest-segment GPS projection
+- `src/reference-profile.js`: reference-pace calculations
+- `src/race-trace.js`: race state, lap alignment and progress
+- `src/renderer.js`: chart drawing and controls
+- `src/data-source.js`: framework-independent GPS snapshot input
+- `src/timing-alignment.js`: completed-lap transition anchors
+- `fixtures/singapore-data.js`: recorded Singapore GPS positions and centreline
+- `fixtures/singapore-timing.js`: recorded Singapore timing transitions
+- `tests/singapore-regression.test.js`: offline regression suite
+- `tests/timing-alignment.test.js`: standalone timing unit tests
+- `golden/singapore-traces.json`: numerical reference traces
+- `baseline.html`: original validated visual preview
 
-## Experimental shared pace and lapped-car wrapping
+## Integration status
 
-The default live `AVERAGE` view now positions drivers against a common
-cumulative reference-lap baseline; observed gaps determine their separation.
-The timing recorder's timestamped samples are used when the card reopens.
-A lapped trace can be displayed one reference lap higher, as a dotted,
-disconnected path, without altering its original data.
+This is a browser preview and test harness, **not yet a Home Assistant card build**. The existing production `dist/f1-race-trace.js` remains unchanged. Next: generalise circuit start/finish and pit handling, then build a thin HA adapter that feeds the same renderer with live GPS and timing data.
 
-```yaml
-type: custom:f1-race-trace
-entity: sensor.f1_drivers_driver_positions
-lap_entity: sensor.f1_race_lap_count
-wrap_lapped: true  # default; set false to disable
-```
-
-This is experimental: a reference-lap-sized gap is an approximation of lap
-status, not definitive lap-down detection. Leader changes during pit cycles
-and SC/VSC periods require replay validation. `timing_engine: legacy` remains
-available as a fallback.
-
-## FIA Safety Car / Virtual Safety Car recording (add-on v0.3.4)
-
-The recorder also polls Nicxe F1 Sensor's `sensor.f1_race_control`
-(configurable as `race_control_entity` in add-on options), deduplicates
-race-control messages using their event IDs, and saves them under
-`race_control` in the existing `live-recording.json`. The card displays
-recorded SC and VSC periods as shaded regions. Existing recordings without
-race-control events remain compatible.
-
-**Installation:** Update the timing add-on to v0.3.4 and rebuild/restart it.
-Refresh the Lovelace card's JavaScript resource to the latest commit.
-New events are recorded from then onward; earlier replay history cannot be
-recovered from the existing driver-only recording. Replay rewind resets the
-event list. Nicxe's sensor only exposes its latest five messages, so the
-recorder should remain running to avoid missing older events.
-
-## Incremental recording downloads (add-on v0.3.5)
-
-The recorder continues writing the complete `live-recording.json` archive.
-It additionally publishes `live-recording-delta.json` with a rolling
-90-second window of samples and FIA race-control events, plus their absolute
-array offsets. The card downloads the full archive on first load, then
-polls the much smaller delta every five seconds. If the delta is missing,
-stale, belongs to another replay run, or no longer covers the samples the
-browser missed, the card automatically reloads the full archive. The
-existing full archive format remains compatible.
-
-Upgrade/rebuild/restart the timing add-on to **v0.3.5** and refresh the
-Lovelace card's JS resource. A custom `recording_url` automatically maps
-`name.json` to `name-delta.json`; use `recording_delta_url` to override.
-This reduces network transfer and JSON parsing; complete trace reconstruction
-is still performed when new data arrives.
+The Singapore fixture's existing coordinates and track key were preserved unchanged; no replacement geometry was introduced.
