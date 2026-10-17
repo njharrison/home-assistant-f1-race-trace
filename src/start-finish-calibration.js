@@ -28,8 +28,21 @@ function calibrate(geometry,frames,lapCrossings,{windowSeconds=3}={}){
   sin+=Math.sin(angle);cos+=Math.cos(angle);
  }
  const concentration=Math.hypot(sin,cos)/candidates.length;
- const angle=(Math.atan2(sin,cos)+2*Math.PI)%(2*Math.PI);
- return {distance:angle/(2*Math.PI)*geometry.length,concentration,count:candidates.length,candidates};
+ const initial=(Math.atan2(sin,cos)+2*Math.PI)%(2*Math.PI)*geometry.length/(2*Math.PI);
+ const circularDelta=(a,b)=>((a-b+geometry.length*1.5)%geometry.length)-geometry.length/2;
+ const offsets=candidates.map(c=>circularDelta(c.distance,initial)).sort((a,b)=>a-b);
+ const median=offsets[Math.floor(offsets.length/2)];
+ const centre=((initial+median)%geometry.length+geometry.length)%geometry.length;
+ const deviations=candidates.map(c=>Math.abs(circularDelta(c.distance,centre))).sort((a,b)=>a-b);
+ const medianDeviation=deviations[Math.floor(deviations.length/2)];
+ const cutoff=Math.max(medianDeviation*3,geometry.length*0.002);
+ const accepted=candidates.filter(c=>Math.abs(circularDelta(c.distance,centre))<=cutoff);
+ const acceptedDrivers=new Set(accepted.map(c=>c.driver)).size;
+ const confidence=acceptedDrivers>=3&&accepted.length>=6&&concentration>=0.98&&
+   medianDeviation<=geometry.length*0.02;
+ return {distance:centre,concentration,count:candidates.length,
+   acceptedCount:accepted.length,driverCount:acceptedDrivers,
+   medianDeviation,confidence,candidates};
 }
 root.RaceTraceCalibration=Object.freeze({calibrate});
 if(typeof module!=='undefined'&&module.exports)module.exports=root.RaceTraceCalibration;
