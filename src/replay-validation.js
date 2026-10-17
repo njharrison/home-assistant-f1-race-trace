@@ -28,7 +28,9 @@ function inspect(geometry,frames,events,finishDistance,direction,{toleranceSecon
   officialCount:events.length,matchedCount:result.matched.length,
   unmatchedCount:result.unmatched.length,
   medianErrorSeconds:errors.length?errors[Math.floor(errors.length/2)]:null,
-  matched:result.matched,unmatched:result.unmatched};
+  surplusCount:result.surplus.length,
+  surplusByReason:result.surplus.reduce((counts,item)=>{counts[item.classification]=(counts[item.classification]||0)+1;return counts;},{}),
+  matched:result.matched,unmatched:result.unmatched,surplus:result.surplus};
 }
 root.RaceTraceReplayValidation=Object.freeze({inspect});
 if(typeof module!=='undefined'&&module.exports)module.exports=root.RaceTraceReplayValidation;
