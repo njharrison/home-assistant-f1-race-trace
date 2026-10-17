@@ -1,3 +1,7 @@
+import '../src/circuit-alignment.js';
+import '../src/recording-sync.js';
+import '../src/start-finish-calibration.js';
+import '../src/official-alignment.js';
 /* F1 Race Trace experimental Home Assistant card.
  * Separate custom element/resource; production card remains untouched.
  * Consumes GPS and timing recording schema_version 1.
