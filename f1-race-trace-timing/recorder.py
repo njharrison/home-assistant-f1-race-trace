@@ -14,6 +14,7 @@ import requests
 LOG = logging.getLogger("f1-race-trace-recorder")
 OUTPUT = Path("/config/www/f1-race-trace/live-recording.json")
 DELTA_OUTPUT = OUTPUT.with_name("live-recording-delta.json")
+GPS_OUTPUT = OUTPUT.with_name("live-gps.json")
 API = "http://supervisor/core/api/states/"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 
@@ -53,6 +54,23 @@ def race_distance(lap_state, driver_state):
         except (ValueError, TypeError, OverflowError):
             pass
     return None
+
+
+def gps_session_clock():
+    """Read the source F1 timestamp, never the host wall clock.
+
+    The GPS recorder writes its samples atomically. Return None until the
+    source feed is available; never invent an F1 time from time.time().
+    """
+    try:
+        data = json.loads(GPS_OUTPUT.read_text())
+        if data.get("schema_version") != 1 or not data.get("samples"):
+            return None
+        last = data["samples"][-1]
+        value = last.get("timestamp")
+        return float(value) if value is not None else None
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
 
 
 def record(options):
@@ -161,9 +179,11 @@ def record(options):
             except (requests.RequestException, ValueError, TypeError) as exc:
                 LOG.debug("Track status unavailable (%s): %s", track_status_entity, exc)
             signature = json.dumps([lap, compact, track_status], sort_keys=True)
-            now = time.time()
+            now = time.time()  # file flush and diagnostic time only
+            source_time = gps_session_clock()
             if signature != last_signature:
                 recording["samples"].append({"timestamp": round(now, 3),
+                                              "session_timestamp": source_time,
                                               "lap": lap, "drivers": compact,
                                               "track_status": track_status})
                 last_signature = signature
