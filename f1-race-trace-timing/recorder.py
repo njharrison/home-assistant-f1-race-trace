@@ -14,7 +14,7 @@ import requests
 LOG = logging.getLogger("f1-race-trace-recorder")
 OUTPUT = Path("/config/www/f1-race-trace/live-recording.json")
 DELTA_OUTPUT = OUTPUT.with_name("live-recording-delta.json")
-GPS_OUTPUT = OUTPUT.with_name("live-gps.json")
+GPS_OUTPUT = OUTPUT.with_name("gps-recording.json")
 API = "http://supervisor/core/api/states/"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 
