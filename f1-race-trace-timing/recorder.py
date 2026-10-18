@@ -31,6 +31,30 @@ def write_atomic(path, value):
     temp.replace(path)
 
 
+def first_present(mapping, *names):
+    """Return the first non-empty sensor attribute, preserving numeric zero."""
+    for name in names:
+        value = mapping.get(name)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def race_distance(lap_state, driver_state):
+    """Use advertised race-distance metadata; never infer it from current lap."""
+    for attrs in (lap_state.get("attributes") or {},
+                  driver_state.get("attributes") or {}):
+        value = first_present(attrs, "total_laps", "race_laps",
+                              "number_of_laps", "total_race_laps")
+        try:
+            laps = int(value)
+            if laps > 0:
+                return laps
+        except (ValueError, TypeError, OverflowError):
+            pass
+    return None
+
+
 def record(options):
     if not TOKEN:
         LOG.error("SUPERVISOR_TOKEN unavailable; live recorder disabled")
@@ -70,6 +94,9 @@ def record(options):
                 seen_control.clear()
                 LOG.info("Replay rewind detected; starting recording run %s", recording["run"])
             last_lap = lap
+            total_laps = race_distance(lap_state, driver_state)
+            if total_laps is not None:
+                recording.setdefault("metadata", {})["total_laps"] = total_laps
             # F1 Sensor exposes the latest FIA message and a short history.
             # Capture each event once, even if it is first seen in history.
             try:
@@ -108,6 +135,15 @@ def record(options):
                     "status": d.get("status") or d.get("driver_status") or d.get("race_status"),
                     "position": d.get("current_position"),
                     "completed_laps": d.get("completed_laps"),
+                    "tyre_compound": first_present(
+                        d, "tyre_compound", "tire_compound", "compound",
+                        "tyre", "tire"),
+                    "tyre_age": first_present(
+                        d, "tyre_age", "tire_age", "tyre_laps",
+                        "tire_laps", "tyre_life", "tire_life"),
+                    "stint": first_present(
+                        d, "stint", "stint_number", "stint_index"),
+
                     "sector_state": d.get("sector_state"),
                     "sector_current_lap": d.get("sector_current_lap"),
                     "sector_1": d.get("sector_1"),
@@ -147,6 +183,7 @@ def record(options):
                     "samples": samples[sample_start:],
                     "event_start": event_start, "event_count": len(events),
                     "race_control": events[event_start:],
+                    "metadata": recording.get("metadata", {}),
                 })
                 last_write = now
         except (requests.RequestException, ValueError, TypeError, OSError) as exc:
