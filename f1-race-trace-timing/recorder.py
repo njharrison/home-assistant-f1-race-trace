@@ -79,6 +79,7 @@ def record(options):
         return
     driver_entity = options.get("driver_entity", "sensor.f1_drivers_driver_positions")
     lap_entity = options.get("lap_entity", "sensor.f1_race_lap_count")
+    tyre_entity = options.get("tyre_entity", "sensor.f1_drivers_current_tyres")
     race_control_entity = options.get("race_control_entity", "sensor.f1_officials_race_control")
     track_status_entity = options.get("track_status_entity", "sensor.f1_track_status")
     session = requests.Session()
@@ -144,8 +145,17 @@ def record(options):
             drivers = driver_state.get("attributes", {}).get("drivers", [])
             if not isinstance(drivers, list):
                 drivers = []
+            tyre_by_number = {}
+            try:
+                tyre_state = get_state(session, tyre_entity)
+                for td in (tyre_state.get("attributes") or {}).get("drivers") or []:
+                    if isinstance(td, dict) and td.get("racing_number") is not None:
+                        tyre_by_number[str(td["racing_number"])] = td
+            except (requests.RequestException, ValueError, TypeError) as exc:
+                LOG.debug("Tyre sensor unavailable (%s): %s", tyre_entity, exc)
             compact = []
             for d in drivers:
+                tyre_data = tyre_by_number.get(str(d.get("racing_number") or ""), {})
                 compact.append({
                     "id": str(d.get("racing_number") or d.get("tla") or ""),
                     "tla": d.get("tla"),
@@ -153,12 +163,12 @@ def record(options):
                     "status": d.get("status") or d.get("driver_status") or d.get("race_status"),
                     "position": d.get("current_position"),
                     "completed_laps": d.get("completed_laps"),
-                    "tyre_compound": first_present(
-                        d, "tyre_compound", "tire_compound", "compound",
-                        "tyre", "tire"),
-                    "tyre_age": first_present(
-                        d, "tyre_age", "tire_age", "tyre_laps",
-                        "tire_laps", "tyre_life", "tire_life"),
+                    "tyre_compound": first_present(tyre_data, "compound", "tyre_compound") or first_present(
+                        d, "tyre_compound", "tire_compound", "compound", "tyre", "tire"),
+                    "tyre_age": first_present(tyre_data, "stint_laps") if first_present(tyre_data, "stint_laps") is not None else first_present(
+                        d, "tyre_age", "tire_age", "tyre_laps", "tire_laps", "tyre_life", "tire_life"),
+                    "tyre_new": tyre_data.get("new"),
+                    "tyre_compound_short": tyre_data.get("compound_short"),
                     "stint": first_present(
                         d, "stint", "stint_number", "stint_index"),
 
