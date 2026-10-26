@@ -13,15 +13,34 @@ import websocket
 
 LOG = logging.getLogger("f1-race-trace-gps")
 OUTPUT = Path("/config/www/f1-race-trace/gps-recording.json")
+DELTA_OUTPUT = OUTPUT.with_name("gps-recording-delta.json")
+DELTA_WINDOW_SECONDS = 180
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 WS_URL = "ws://supervisor/core/websocket"
 
 
+def _write_atomic(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(value, separators=(",", ":"), allow_nan=False))
+    temporary.replace(path)
+
+
 def _save(document):
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    temporary = OUTPUT.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(document, separators=(",", ":"), allow_nan=False))
-    temporary.replace(OUTPUT)
+    _write_atomic(OUTPUT, document)
+    samples = document["samples"]
+    cutoff = time.time() - DELTA_WINDOW_SECONDS
+    start = next((i for i, sample in enumerate(samples)
+                  if sample["recorded_at"] >= cutoff), len(samples))
+    _write_atomic(DELTA_OUTPUT, {
+        "schema_version": 1,
+        "run": document["run"],
+        "geometry": document["geometry"],
+        "first_recorded_at": samples[0]["recorded_at"] if samples else None,
+        "sample_start": start,
+        "sample_count": len(samples),
+        "samples": samples[start:],
+    })
 
 
 def record_gps(options):
