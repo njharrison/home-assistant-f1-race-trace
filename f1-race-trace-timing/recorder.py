@@ -92,7 +92,7 @@ def record(options):
     track_status_entity = options.get("track_status_entity", "sensor.f1_track_status")
     session = requests.Session()
     session.headers.update({"Authorization": "Bearer " + TOKEN})
-    recording = recover(JOURNAL, OUTPUT, {"schema_version": 1, "source": "F1 Sensor", "run": 1, "samples": [], "race_control": []})
+    recording = recover(JOURNAL, OUTPUT if not options.get('recording_id') else JOURNAL.with_suffix('.legacy.json'), {"schema_version": 1, "source": "F1 Sensor", "run": 1, "samples": [], "race_control": []})
     seen_control = {e.get("event_id") for e in recording["race_control"] if e.get("event_id")}
     last_lap = recording["samples"][-1]["lap"] if recording["samples"] else None
     last_signature = None
