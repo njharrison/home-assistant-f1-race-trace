@@ -20,6 +20,7 @@ options:
   record_live: true
   record_gps: false
   export_archive: false
+  recording_id: ""
   track_map_entry_id: ""
   driver_entity: sensor.f1_drivers_driver_positions
   lap_entity: sensor.f1_race_lap_count
@@ -33,6 +34,7 @@ schema:
   record_live: bool
   record_gps: bool
   export_archive: bool
+  recording_id: str
   track_map_entry_id: str
   driver_entity: str
   lap_entity: str
