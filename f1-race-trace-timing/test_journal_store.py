@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from journal_store import append, recover, read, journal_path
 from clear_race_data import clear_recording
+from start import clear_selected_recording
 
 
 class JournalRecoveryTests(unittest.TestCase):
@@ -70,6 +71,22 @@ class JournalRecoveryTests(unittest.TestCase):
         self.assertTrue(target.exists())
         clear_recording(root, "British GP", "CLEAR british-gp")
         self.assertFalse(target.exists())
+
+    def test_supervisor_clear_preserves_journal_history(self):
+        import start
+        original = start.WEB_ROOT
+        start.WEB_ROOT = Path(self.temp.name)
+        self.addCleanup(setattr, start, "WEB_ROOT", original)
+        target = start.WEB_ROOT / "recordings" / "british-gp"
+        target.mkdir(parents=True)
+        (target / "gps-recording.jsonl").write_text("sample")
+        (start.WEB_ROOT / "gps-recording.json").write_text("old view")
+        clear_selected_recording({"recording_id": "British GP"})
+        self.assertFalse(target.exists())
+        self.assertFalse((start.WEB_ROOT / "gps-recording.json").exists())
+        archived = list((start.WEB_ROOT / "recordings-history").glob("british-gp-*"))
+        self.assertEqual(len(archived), 1)
+        self.assertEqual((archived[0] / "gps-recording.jsonl").read_text(), "sample")
 
     def test_gps_geometry(self):
         template = {"schema_version": 1, "run": 1, "geometry": None, "samples": []}
