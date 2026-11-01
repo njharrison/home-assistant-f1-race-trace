@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from journal_store import append, recover, read
+from journal_store import append, recover, read, journal_path
 
 
 class JournalRecoveryTests(unittest.TestCase):
@@ -47,6 +47,15 @@ class JournalRecoveryTests(unittest.TestCase):
         self.assertTrue(self.journal.with_suffix(".jsonl.partial").exists())
         append(self.journal, {"type": "sample", "run": 1, "sample": {"lap": 2}})
         self.assertEqual(len(read(self.journal)), 2)
+
+    def test_distinct_events_have_distinct_journals(self):
+        one = journal_path(self.archive, {"recording_id": "British Grand Prix 2026"})
+        two = journal_path(self.archive, {"recording_id": "Belgian Grand Prix 2026"})
+        self.assertNotEqual(one, two)
+        append(one, {"type": "sample", "run": 1, "sample": {"lap": 1}})
+        append(two, {"type": "sample", "run": 1, "sample": {"lap": 2}})
+        self.assertEqual(len(read(one)), 1)
+        self.assertEqual(len(read(two)), 1)
 
     def test_gps_geometry(self):
         template = {"schema_version": 1, "run": 1, "geometry": None, "samples": []}
