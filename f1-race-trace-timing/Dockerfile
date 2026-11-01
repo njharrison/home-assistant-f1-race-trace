@@ -13,5 +13,6 @@ RUN apk add --no-cache python3 py3-pip py3-pandas py3-numpy py3-scipy \
 COPY run.py /run.py
 COPY recorder.py /recorder.py
 COPY gps_recorder.py /gps_recorder.py
+COPY journal_store.py /journal_store.py
 COPY start.py /start.py
 CMD ["/usr/bin/with-contenv", "/opt/venv/bin/python", "/start.py"]
