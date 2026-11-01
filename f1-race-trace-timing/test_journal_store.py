@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from journal_store import append, recover, read, journal_path
+from clear_race_data import clear_recording
 
 
 class JournalRecoveryTests(unittest.TestCase):
@@ -56,6 +57,19 @@ class JournalRecoveryTests(unittest.TestCase):
         append(two, {"type": "sample", "run": 1, "sample": {"lap": 2}})
         self.assertEqual(len(read(one)), 1)
         self.assertEqual(len(read(two)), 1)
+
+    def test_clear_requires_confirmation_and_stopped_recorder(self):
+        root = Path(self.temp.name) / "recordings"
+        target = root / "british-gp"
+        target.mkdir(parents=True)
+        (target / "gps-recording.jsonl").write_text("test")
+        with self.assertRaises(ValueError):
+            clear_recording(root, "British GP", "NO")
+        with self.assertRaises(RuntimeError):
+            clear_recording(root, "British GP", "CLEAR british-gp", recorder_running=True)
+        self.assertTrue(target.exists())
+        clear_recording(root, "British GP", "CLEAR british-gp")
+        self.assertFalse(target.exists())
 
     def test_gps_geometry(self):
         template = {"schema_version": 1, "run": 1, "geometry": None, "samples": []}
