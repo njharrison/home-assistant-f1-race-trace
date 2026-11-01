@@ -51,6 +51,8 @@ def clear_selected_recording(options):
     history.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     target.rename(history / (key + "-" + timestamp))
+    for name in ("live-recording.json", "gps-recording.json", "live-recording-delta.json", "gps-recording-delta.json"):
+        (WEB_ROOT / name).unlink(missing_ok=True)
     LOG.warning("Cleared active recording %s; previous journal preserved in history", key)
 
 
