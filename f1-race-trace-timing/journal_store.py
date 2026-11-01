@@ -5,6 +5,7 @@ line is preserved in a quarantine file before appending again.
 """
 import json
 import os
+import re
 from pathlib import Path
 
 
@@ -80,3 +81,20 @@ def recover(path, archive, template, gps=False):
         elif kind == "race_control" and not gps:
             document["race_control"].append(row["event"])
     return document
+
+
+def recording_key(options):
+    """An explicitly selected identity, independent of historical export."""
+    value = str(options.get("recording_id") or "").strip()
+    if not value:
+        return "unassigned"
+    key = re.sub(r"[^a-zA-Z0-9_-]+", "-", value).strip("-").lower()
+    if not key or len(key) > 80:
+        raise ValueError("recording_id must be 1-80 safe characters")
+    return key
+
+
+def journal_path(output, options):
+    """Keep each event's authoritative journal separate from public views."""
+    output = Path(output)
+    return output.parent / "recordings" / recording_key(options) / (output.stem + ".jsonl")
