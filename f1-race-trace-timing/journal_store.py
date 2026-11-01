@@ -31,8 +31,13 @@ def read(path):
         quarantine = path.with_suffix(path.suffix + ".partial")
         with quarantine.open("ab") as handle:
             handle.write(torn + b"\n")
-        with path.open("wb") as handle:
+        # Preserve the intact prefix using an atomic replacement.
+        repaired = path.with_suffix(path.suffix + ".repair")
+        with repaired.open("wb") as handle:
             handle.write(b"\n".join(lines) + b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        repaired.replace(path)
     result = []
     for line in lines:
         if not line:
