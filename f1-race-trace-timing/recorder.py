@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import requests
+from journal_store import append, recover
 
 LOG = logging.getLogger("f1-race-trace-recorder")
 OUTPUT = Path("/config/www/f1-race-trace/live-recording.json")
@@ -34,9 +35,7 @@ def write_atomic(path, value):
 
 
 def append_journal(value):
-    JOURNAL.parent.mkdir(parents=True, exist_ok=True)
-    with JOURNAL.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(value, separators=(",", ":"), allow_nan=False) + "\n")
+    append(JOURNAL, value)
 
 
 def first_present(mapping, *names):
@@ -91,9 +90,9 @@ def record(options):
     track_status_entity = options.get("track_status_entity", "sensor.f1_track_status")
     session = requests.Session()
     session.headers.update({"Authorization": "Bearer " + TOKEN})
-    recording = {"schema_version": 1, "source": "F1 Sensor", "run": 1, "samples": [], "race_control": []}
-    seen_control = set()
-    last_lap = None
+    recording = recover(JOURNAL, OUTPUT, {"schema_version": 1, "source": "F1 Sensor", "run": 1, "samples": [], "race_control": []})
+    seen_control = {e.get("event_id") for e in recording["race_control"] if e.get("event_id")}
+    last_lap = recording["samples"][-1]["lap"] if recording["samples"] else None
     last_signature = None
     last_write = 0
     last_archive_write = 0
