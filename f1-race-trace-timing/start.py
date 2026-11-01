@@ -16,11 +16,13 @@ if options.get("record_gps", False):
     from gps_recorder import record_gps
     threading.Thread(target=record_gps, args=(options,), daemon=True).start()
 
-# Export the archive once without stopping the recorder if FastF1 fails.
-try:
-    subprocess.run([sys.executable, "/run.py"], check=True)
-except Exception:
-    logging.exception("Archive export failed; live recorder will continue")
+# Historical FastF1 archive generation is optional and independent of live recording.
+if options.get("export_archive", False):
+    try:
+        subprocess.run([sys.executable, "/run.py"], check=True)
+    except Exception:
+        logging.exception("Archive export failed; live recorder will continue")
+
 
 if options.get("record_live", True) or options.get("record_gps", False):
     threading.Event().wait()
