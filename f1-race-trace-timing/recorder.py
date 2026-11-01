@@ -16,6 +16,7 @@ LOG = logging.getLogger("f1-race-trace-recorder")
 OUTPUT = Path("/config/www/f1-race-trace/live-recording.json")
 DELTA_OUTPUT = OUTPUT.with_name("live-recording-delta.json")
 GPS_OUTPUT = OUTPUT.with_name("gps-recording.json")
+GPS_DELTA_OUTPUT = OUTPUT.with_name("gps-recording-delta.json")
 JOURNAL = OUTPUT.with_suffix(".jsonl")
 API = "http://supervisor/core/api/states/"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
@@ -69,7 +70,8 @@ def gps_session_clock():
     source feed is available; never invent an F1 time from time.time().
     """
     try:
-        data = json.loads(GPS_OUTPUT.read_text())
+        # Prefer the current rolling feed; full archives are only updated periodically.
+        data = json.loads((GPS_DELTA_OUTPUT if GPS_DELTA_OUTPUT.exists() else GPS_OUTPUT).read_text())
         if data.get("schema_version") != 1 or not data.get("samples"):
             return None
         last = data["samples"][-1]
