@@ -110,3 +110,7 @@ Lovelace card's JS resource. A custom `recording_url` automatically maps
 `name.json` to `name-delta.json`; use `recording_delta_url` to override.
 This reduces network transfer and JSON parsing; complete trace reconstruction
 is still performed when new data arrives.
+
+## Optional historical FastF1 export (add-on v0.3.18)
+
+Historical FastF1 lap export is now disabled by default. Set `export_archive: true` in the add-on options to generate the selected session's historical lap archive at startup. This is independent of `record_live` and `record_gps`. Existing archive files are retained; disabling the export does not delete them. The exporter remains available for workflows that use historical lap data.
