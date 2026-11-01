@@ -17,9 +17,6 @@ map:
   - share:rw
   - config:rw
 options:
-  year: 2026
-  event: Japanese Grand Prix
-  session: R
   record_live: true
   record_gps: false
   export_archive: false
@@ -30,9 +27,9 @@ options:
   race_control_entity: sensor.f1_officials_race_control
   track_status_entity: sensor.f1_track_status
 schema:
-  year: int(1950,2100)
-  event: str
-  session: str
+  year: int(1950,2100)?
+  event: str?
+  session: str?
   record_live: bool
   record_gps: bool
   export_archive: bool
