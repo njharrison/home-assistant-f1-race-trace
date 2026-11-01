@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import websocket
+from journal_store import append, recover
 
 # A quiet subscription is normal between sessions or while replay is paused.
 # Reconnect only after an extended idle period, rather than on each socket timeout.
@@ -32,9 +33,7 @@ def _write_atomic(path, value):
 
 
 def _append_journal(value):
-    JOURNAL.parent.mkdir(parents=True, exist_ok=True)
-    with JOURNAL.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(value, separators=(",", ":"), allow_nan=False) + "\n")
+    append(JOURNAL, value)
 
 
 def _save(document, full_archive=False):
@@ -60,11 +59,11 @@ def record_gps(options):
         LOG.warning("No Supervisor token; GPS recording unavailable")
         return
     entry_id = str(options.get("track_map_entry_id") or "").strip()
-    document = {"schema_version": 1, "source": "F1 Sensor Track Map",
+    document = recover(JOURNAL, OUTPUT, {"schema_version": 1, "source": "F1 Sensor Track Map",
                 "run": 1, "geometry": None, "samples": [],
                 "recorded_at_clock": "unix_epoch_utc",
-                "timestamp_clock": "f1_session"}
-    previous_time = None
+                "timestamp_clock": "f1_session"}, gps=True)
+    previous_time = document["samples"][-1]["timestamp"] if document["samples"] else None
     previous_signature = None
     last_write = 0.0
     last_archive_write = 0.0
