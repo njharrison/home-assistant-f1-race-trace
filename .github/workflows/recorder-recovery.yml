@@ -1,0 +1,24 @@
+name: Recorder recovery tests
+on:
+  push:
+    paths:
+      - 'f1-race-trace-timing/**'
+      - '.github/workflows/recorder-recovery.yml'
+  pull_request:
+    paths:
+      - 'f1-race-trace-timing/**'
+      - '.github/workflows/recorder-recovery.yml'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Syntax check
+        run: python -m compileall -q f1-race-trace-timing
+      - name: Journal recovery tests
+        run: cd f1-race-trace-timing && python -m unittest -v test_journal_store

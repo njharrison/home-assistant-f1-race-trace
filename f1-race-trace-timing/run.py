@@ -11,6 +11,8 @@ cache = root / "fastf1-cache"
 cache.mkdir(exist_ok=True)
 fastf1.Cache.enable_cache(str(cache))
 options = json.loads(Path("/data/options.json").read_text())
+if not all(options.get(key) for key in ("year", "event", "session")):
+    raise ValueError("Historical export requires year, event and session to be explicitly configured")
 year, event, session_type = int(options["year"]), options["event"], options["session"]
 logging.info("Loading %s %s %s", year, event, session_type)
 session = fastf1.get_session(year, event, session_type)

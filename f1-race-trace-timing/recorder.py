@@ -10,11 +10,14 @@ import time
 from pathlib import Path
 
 import requests
+from journal_store import append, recover, journal_path
 
 LOG = logging.getLogger("f1-race-trace-recorder")
 OUTPUT = Path("/config/www/f1-race-trace/live-recording.json")
 DELTA_OUTPUT = OUTPUT.with_name("live-recording-delta.json")
 GPS_OUTPUT = OUTPUT.with_name("gps-recording.json")
+GPS_DELTA_OUTPUT = OUTPUT.with_name("gps-recording-delta.json")
+JOURNAL = OUTPUT.with_suffix(".jsonl")
 API = "http://supervisor/core/api/states/"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 
@@ -30,6 +33,10 @@ def write_atomic(path, value):
     temp = path.with_suffix(".json.tmp")
     temp.write_text(json.dumps(value, separators=(",", ":"), allow_nan=False))
     temp.replace(path)
+
+
+def append_journal(value):
+    append(JOURNAL, value)
 
 
 def first_present(mapping, *names):
@@ -63,7 +70,8 @@ def gps_session_clock():
     source feed is available; never invent an F1 time from time.time().
     """
     try:
-        data = json.loads(GPS_OUTPUT.read_text())
+        # Prefer the current rolling feed; full archives are only updated periodically.
+        data = json.loads((GPS_DELTA_OUTPUT if GPS_DELTA_OUTPUT.exists() else GPS_OUTPUT).read_text())
         if data.get("schema_version") != 1 or not data.get("samples"):
             return None
         last = data["samples"][-1]
@@ -77,6 +85,8 @@ def record(options):
     if not TOKEN:
         LOG.error("SUPERVISOR_TOKEN unavailable; live recorder disabled")
         return
+    global JOURNAL
+    JOURNAL = journal_path(OUTPUT, options)
     driver_entity = options.get("driver_entity", "sensor.f1_drivers_driver_positions")
     lap_entity = options.get("lap_entity", "sensor.f1_race_lap_count")
     tyre_entity = options.get("tyre_entity", "sensor.f1_drivers_current_tyres")
@@ -84,11 +94,12 @@ def record(options):
     track_status_entity = options.get("track_status_entity", "sensor.f1_track_status")
     session = requests.Session()
     session.headers.update({"Authorization": "Bearer " + TOKEN})
-    recording = {"schema_version": 1, "source": "F1 Sensor", "run": 1, "samples": [], "race_control": []}
-    seen_control = set()
-    last_lap = None
+    recording = recover(JOURNAL, OUTPUT if not options.get('recording_id') else JOURNAL.with_suffix('.legacy.json'), {"schema_version": 1, "source": "F1 Sensor", "run": 1, "samples": [], "race_control": []})
+    seen_control = {e.get("event_id") for e in recording["race_control"] if e.get("event_id")}
+    last_lap = recording["samples"][-1]["lap"] if recording["samples"] else None
     last_signature = None
     last_write = 0
+    last_archive_write = 0
     # Keep a rolling window, not just the last batch: a browser can miss polls.
     delta_window_seconds = 90
     LOG.info("Recording %s and %s to %s", driver_entity, lap_entity, OUTPUT)
@@ -111,6 +122,7 @@ def record(options):
                              "run": recording["run"] + 1, "samples": [], "race_control": []}
                 last_signature = None
                 seen_control.clear()
+                append_journal({"type": "run_start", "run": recording["run"]})
                 LOG.info("Replay rewind detected; starting recording run %s", recording["run"])
             last_lap = lap
             total_laps = race_distance(lap_state, driver_state)
@@ -140,6 +152,7 @@ def record(options):
                         "flag": event.get("flag"),
                         "message": event.get("message"),
                     })
+                    append_journal({"type": "race_control", "run": recording["run"], "event": recording["race_control"][-1]})
             except (requests.RequestException, ValueError, TypeError) as exc:
                 LOG.debug("Race control unavailable (%s): %s", race_control_entity, exc)
             drivers = driver_state.get("attributes", {}).get("drivers", [])
@@ -197,8 +210,8 @@ def record(options):
                                               "lap": lap, "drivers": compact,
                                               "track_status": track_status})
                 last_signature = signature
+                append_journal({"type": "sample", "run": recording["run"], "sample": recording["samples"][-1]})
             if now - last_write >= 2:
-                write_atomic(OUTPUT, recording)
                 samples = recording["samples"]
                 events = recording["race_control"]
                 sample_start = next((i for i, row in enumerate(samples)
@@ -216,6 +229,9 @@ def record(options):
                     "metadata": recording.get("metadata", {}),
                 })
                 last_write = now
+            if now - last_archive_write >= 30:
+                write_atomic(OUTPUT, recording)
+                last_archive_write = now
         except (requests.RequestException, ValueError, TypeError, OSError) as exc:
             LOG.warning("Live recorder retrying: %s", exc)
         time.sleep(1)
