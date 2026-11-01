@@ -61,7 +61,7 @@ def record_gps(options):
     entry_id = str(options.get("track_map_entry_id") or "").strip()
     global JOURNAL
     JOURNAL = journal_path(OUTPUT, options)
-    document = recover(JOURNAL, OUTPUT, {"schema_version": 1, "source": "F1 Sensor Track Map",
+    document = recover(JOURNAL, OUTPUT if not options.get('recording_id') else JOURNAL.with_suffix('.legacy.json'), {"schema_version": 1, "source": "F1 Sensor Track Map",
                 "run": 1, "geometry": None, "samples": [],
                 "recorded_at_clock": "unix_epoch_utc",
                 "timestamp_clock": "f1_session"}, gps=True)
