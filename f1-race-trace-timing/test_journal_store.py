@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from journal_store import append, recover, read, journal_path
 from clear_race_data import clear_recording
-from start import clear_selected_recording
+from start import clear_selected_recording, button_revision
 
 
 class JournalRecoveryTests(unittest.TestCase):
@@ -87,6 +87,23 @@ class JournalRecoveryTests(unittest.TestCase):
         archived = list((start.WEB_ROOT / "recordings-history").glob("british-gp-*"))
         self.assertEqual(len(archived), 1)
         self.assertEqual((archived[0] / "gps-recording.jsonl").read_text(), "sample")
+
+    def test_button_revision_requires_matching_entity(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+            def json(self):
+                return {"entity_id": "input_button.f1_clear_race_data",
+                        "last_changed": "2026-11-01T21:00:00Z"}
+        class FakeSession:
+            def get(self, url, timeout):
+                self.url = url
+                return FakeResponse()
+        session = FakeSession()
+        self.assertEqual(button_revision(session, "input_button.f1_clear_race_data"),
+                         "2026-11-01T21:00:00Z")
+        with self.assertRaises(ValueError):
+            button_revision(session, "input_button.wrong")
 
     def test_gps_geometry(self):
         template = {"schema_version": 1, "run": 1, "geometry": None, "samples": []}
