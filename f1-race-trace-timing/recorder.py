@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 import requests
-from journal_store import append, recover
+from journal_store import append, recover, journal_path
 
 LOG = logging.getLogger("f1-race-trace-recorder")
 OUTPUT = Path("/config/www/f1-race-trace/live-recording.json")
@@ -83,6 +83,8 @@ def record(options):
     if not TOKEN:
         LOG.error("SUPERVISOR_TOKEN unavailable; live recorder disabled")
         return
+    global JOURNAL
+    JOURNAL = journal_path(OUTPUT, options)
     driver_entity = options.get("driver_entity", "sensor.f1_drivers_driver_positions")
     lap_entity = options.get("lap_entity", "sensor.f1_race_lap_count")
     tyre_entity = options.get("tyre_entity", "sensor.f1_drivers_current_tyres")
