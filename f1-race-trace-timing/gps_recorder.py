@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 import websocket
-from journal_store import append, recover
+from journal_store import append, recover, journal_path
 
 # A quiet subscription is normal between sessions or while replay is paused.
 # Reconnect only after an extended idle period, rather than on each socket timeout.
@@ -59,6 +59,8 @@ def record_gps(options):
         LOG.warning("No Supervisor token; GPS recording unavailable")
         return
     entry_id = str(options.get("track_map_entry_id") or "").strip()
+    global JOURNAL
+    JOURNAL = journal_path(OUTPUT, options)
     document = recover(JOURNAL, OUTPUT, {"schema_version": 1, "source": "F1 Sensor Track Map",
                 "run": 1, "geometry": None, "samples": [],
                 "recorded_at_clock": "unix_epoch_utc",
