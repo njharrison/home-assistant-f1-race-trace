@@ -11,6 +11,10 @@ from pathlib import Path
 
 import websocket
 
+# A quiet subscription is normal between sessions or while replay is paused.
+# Reconnect only after an extended idle period, rather than on each socket timeout.
+GPS_IDLE_RECONNECT_SECONDS = 120
+
 LOG = logging.getLogger("f1-race-trace-gps")
 OUTPUT = Path("/config/www/f1-race-trace/gps-recording.json")
 DELTA_OUTPUT = OUTPUT.with_name("gps-recording-delta.json")
@@ -72,8 +76,18 @@ def record_gps(options):
                 command["entry_id"] = entry_id
             ws.send(json.dumps(command))
             LOG.info("Track Map GPS subscription requested")
+            last_message_at = time.monotonic()
             while True:
-                raw_message = ws.recv()
+                try:
+                    raw_message = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    idle_seconds = time.monotonic() - last_message_at
+                    if idle_seconds >= GPS_IDLE_RECONNECT_SECONDS:
+                        raise TimeoutError(
+                            f"Track Map stream silent for {idle_seconds:.0f}s; reconnecting"
+                        )
+                    continue
+                last_message_at = time.monotonic()
                 received_at = round(time.time(), 3)
                 message = json.loads(raw_message)
                 if message.get("type") == "result" and not message.get("success", True):
