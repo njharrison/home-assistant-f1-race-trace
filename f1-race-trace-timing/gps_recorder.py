@@ -18,6 +18,7 @@ GPS_IDLE_RECONNECT_SECONDS = 120
 LOG = logging.getLogger("f1-race-trace-gps")
 OUTPUT = Path("/config/www/f1-race-trace/gps-recording.json")
 DELTA_OUTPUT = OUTPUT.with_name("gps-recording-delta.json")
+JOURNAL = OUTPUT.with_suffix(".jsonl")
 DELTA_WINDOW_SECONDS = 180
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 WS_URL = "ws://supervisor/core/websocket"
@@ -30,8 +31,15 @@ def _write_atomic(path, value):
     temporary.replace(path)
 
 
-def _save(document):
-    _write_atomic(OUTPUT, document)
+def _append_journal(value):
+    JOURNAL.parent.mkdir(parents=True, exist_ok=True)
+    with JOURNAL.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(value, separators=(",", ":"), allow_nan=False) + "\n")
+
+
+def _save(document, full_archive=False):
+    if full_archive:
+        _write_atomic(OUTPUT, document)
     samples = document["samples"]
     cutoff = time.time() - DELTA_WINDOW_SECONDS
     start = next((i for i, sample in enumerate(samples)
@@ -59,6 +67,7 @@ def record_gps(options):
     previous_time = None
     previous_signature = None
     last_write = 0.0
+    last_archive_write = 0.0
     while True:
         ws = None
         try:
@@ -113,11 +122,13 @@ def record_gps(options):
                                 "recorded_at_clock": "unix_epoch_utc",
                                 "timestamp_clock": "f1_session"}
                     previous_signature = None
+                    _append_journal({"type": "run_start", "run": document["run"]})
                     LOG.info("GPS replay rewind: run %s", document["run"])
                 previous_time = instant
                 track = snapshot.get("track")
                 if track and track != document["geometry"]:
                     document["geometry"] = track
+                    _append_journal({"type": "geometry", "run": document["run"], "geometry": track})
                 compact = []
                 for driver in drivers:
                     if not isinstance(driver, dict):
@@ -144,9 +155,13 @@ def record_gps(options):
                         "drivers": compact,
                     })
                     previous_signature = signature
-                if time.monotonic() - last_write >= 2:
-                    _save(document)
-                    last_write = time.monotonic()
+                    _append_journal({"type": "sample", "run": document["run"], "sample": document["samples"][-1]})
+                now_monotonic = time.monotonic()
+                if now_monotonic - last_write >= 2:
+                    _save(document, full_archive=now_monotonic - last_archive_write >= 30)
+                    if now_monotonic - last_archive_write >= 30:
+                        last_archive_write = now_monotonic
+                    last_write = now_monotonic
         except Exception:
             LOG.exception("Track Map stream unavailable; retrying in 10 seconds")
         finally:
