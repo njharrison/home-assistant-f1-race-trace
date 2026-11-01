@@ -35,6 +35,7 @@ schema:
   session: str
   record_live: bool
   record_gps: bool
+  export_archive: bool
   track_map_entry_id: str
   driver_entity: str
   lap_entity: str
